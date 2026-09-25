@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net"
+	"net/url"
 	"os"
 	"path/filepath"
 	"slices"
@@ -75,6 +77,51 @@ func codex(home string) *Agent {
 		}
 		return edit.DelTOMLTop(path, "openai_base_url")
 	}
+	// restore hands back what magpie found before it took Codex over: the
+	// endpoint of another local gateway (see foreignGateway), the provider
+	// and the catalog that were there. Values of magpie's own are dropped
+	// rather than put back, and each stash entry is taken exactly once, so a
+	// stale value cannot be restored over one another program has since
+	// written.
+	//
+	// native says the user picked one of Codex's own models, so the effort
+	// that model had comes back with it. The model itself never does: the
+	// caller sets the one that was picked, and asking for the agent's own
+	// default leaves none — which is what its `default` means.
+	//
+	// Keys go back at the end of the root section, which can be inside
+	// another router's own marked block when that is where it keeps them.
+	// That is harmless for the two keys it manages itself — it rewrites them
+	// with the same values it gave magpie — and model_provider, the one it
+	// does not manage, costs only itself if that router later regenerates
+	// its block: Codex still reaches it through the base URL.
+	restore := func(native bool) error {
+		var back []edit.KV
+		add := func(key, value string) {
+			if value != "" {
+				back = append(back, edit.KV{Path: key, Value: value})
+			}
+		}
+		if b := unstash("codex.base_url"); b != "" && !isCodexGateway(b) {
+			add("openai_base_url", b)
+		}
+		if p := unstash("codex.provider"); p != "" && p != magpieID {
+			add("model_provider", p)
+		}
+		if c := unstash("codex.catalog"); c != "" && c != catalogPath {
+			add("model_catalog_json", c)
+		}
+		if native {
+			if e := unstash("codex.effort"); e != "" {
+				add("model_reasoning_effort", e)
+			}
+		}
+		unstash("codex.model")
+		if len(back) == 0 {
+			return nil
+		}
+		return edit.SetTOMLTop(path, back...)
+	}
 	// the model spawned subagents start on, when not the parent's; one of
 	// magpie's goes when magpie steps out, as Codex could no longer find it
 	subagent := func() string { return edit.GetTOMLTable(path, "agents")["default_subagent_model"] }
@@ -101,7 +148,9 @@ func codex(home string) *Agent {
 			if err := dropSubagent(); err != nil {
 				return err
 			}
-			// Codex as installed: OpenAI, its own catalog, its default model
+			// magpie's own wiring comes out — its endpoint, its provider
+			// table, its catalog file — and Codex is left as installed
+			// otherwise
 			if err := dropBase(); err != nil {
 				return err
 			}
@@ -112,13 +161,19 @@ func codex(home string) *Agent {
 				return err
 			}
 			os.Remove(catalogPath)
-			forget("codex.model", "codex.effort", "codex.provider", "codex.catalog")
+			// what another program had there — a router's endpoint above all
+			// — goes back rather than staying deleted
+			if err := restore(false); err != nil {
+				return err
+			}
+			forget("codex.model", "codex.effort", "codex.provider", "codex.catalog", "codex.base_url")
 			return nil
 		}
 		if isMagpie(v) {
 			if !routed() {
 				stash(map[string]string{"codex.model": get("model"), "codex.effort": get("model_reasoning_effort"),
-					"codex.provider": get("model_provider"), "codex.catalog": get("model_catalog_json")})
+					"codex.provider": get("model_provider"), "codex.catalog": get("model_catalog_json"),
+					"codex.base_url": get("openai_base_url")})
 			}
 			// a ChatGPT account out of allowance keeps the Codex app from
 			// sending at all, a magpie model's request too; as a provider
@@ -173,21 +228,8 @@ func codex(home string) *Agent {
 			if err := dropSubagent(); err != nil {
 				return err
 			}
-			unstash("codex.model")
-			var back []edit.KV
-			if p := unstash("codex.provider"); p != "" && p != magpieID {
-				back = append(back, edit.KV{Path: "model_provider", Value: p})
-			}
-			if c := unstash("codex.catalog"); c != "" && c != catalogPath {
-				back = append(back, edit.KV{Path: "model_catalog_json", Value: c})
-			}
-			if e := unstash("codex.effort"); e != "" {
-				back = append(back, edit.KV{Path: "model_reasoning_effort", Value: e})
-			}
-			if len(back) > 0 {
-				if err := edit.SetTOMLTop(path, back...); err != nil {
-					return err
-				}
+			if err := restore(true); err != nil {
+				return err
 			}
 		}
 		if err := edit.SetTOMLTop(path, edit.KV{Path: "model", Value: v}); err != nil {
@@ -264,10 +306,17 @@ func codex(home string) *Agent {
 		// the app-server behind the Codex app (and every codex TUI) builds
 		// its model list once, at start-up.
 		Notice: func() string {
+			var out []string
 			if Running(`(^|/)codex( |$)`) {
-				return "Codex builds its model list at start-up — restart the Codex app (and open codex sessions) to see this."
+				out = append(out, "Codex builds its model list at start-up — restart the Codex app (and open codex sessions) to see this.")
 			}
-			return ""
+			// magpie took Codex's endpoint over from another program on this
+			// machine: while one of magpie's models is selected that program
+			// is out of the loop, and one of Codex's own hands it back
+			if b := stashLoad()["codex.base_url"]; routed() && foreignGateway(b) {
+				out = append(out, "magpie took Codex's endpoint over from another local gateway at "+b+"; picking one of Codex's own models hands it back.")
+			}
+			return strings.Join(out, " ")
 		},
 		Fields: []Field{
 			{
@@ -363,6 +412,30 @@ func codexGatewayURL() string { return gateway.URL() + gateway.CodexPath }
 // whichever port it listened on then.
 func isCodexGateway(u string) bool {
 	return strings.HasPrefix(u, "http://127.0.0.1:") && strings.HasSuffix(strings.TrimSuffix(u, "/"), gateway.CodexPath)
+}
+
+// foreignGateway reports whether a base URL is another program's endpoint
+// on this machine rather than a vendor's or magpie's — another router's own
+// loopback port, typically. magpie takes that endpoint over while one of
+// its models is selected, which puts the other program out of the loop, so
+// it is worth saying so rather than shadowing it silently.
+func foreignGateway(u string) bool {
+	if u == "" || isCodexGateway(u) {
+		return false
+	}
+	p, err := url.Parse(u)
+	if err != nil {
+		return false
+	}
+	switch p.Hostname() {
+	case "127.0.0.1", "localhost", "::1":
+	default:
+		return false
+	}
+	// magpie's own gateway is not another program's, whichever port it was
+	// moved to and however the URL spells its host
+	_, ours, err := net.SplitHostPort(gateway.Addr())
+	return err != nil || p.Port() != ours
 }
 
 // codexStaleCache ages Codex's cached model list if it isn't the one magpie
