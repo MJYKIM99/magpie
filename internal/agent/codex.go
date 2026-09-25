@@ -578,10 +578,13 @@ func codexIn(at place) *Agent {
 		}
 		was := unstash(at.key("codex.model"))
 		var back []edit.KV
-		if p := unstash(at.key("codex.provider")); p != "" && p != magpieID {
+		if b := unstash(at.key("codex.base_url")); b != "" && !isCodexGatewayOn(b, at.host()) && get("openai_base_url") == "" {
+			back = append(back, edit.KV{Path: "openai_base_url", Value: b})
+		}
+		if p := unstash(at.key("codex.provider")); p != "" && p != magpieID && get("model_provider") == "" {
 			back = append(back, edit.KV{Path: "model_provider", Value: p})
 		}
-		if c := unstash(at.key("codex.catalog")); c != "" && !ownCatalog(c) {
+		if c := unstash(at.key("codex.catalog")); c != "" && !ownCatalog(c) && get("model_catalog_json") == "" {
 			back = append(back, edit.KV{Path: "model_catalog_json", Value: c})
 		}
 		if e := unstash(at.key("codex.effort")); e != "" {
@@ -596,25 +599,17 @@ func codexIn(at place) *Agent {
 	}
 	set := func(v string) error {
 		if v == "" {
-			if err := dropSubagent(); err != nil {
+			if _, err := unroute(); err != nil {
 				return err
 			}
-			if err := giveTables(); err != nil {
+			if err := dropSubagent(); err != nil {
 				return err
 			}
 			if err := dropMirrorFailover(); err != nil {
 				return err
 			}
-			// Codex as installed: OpenAI, its own catalog, its default model
-			if err := dropBase(); err != nil {
-				return err
-			}
-			if err := edit.DelTOMLTop(path, "model", "model_provider", "model_catalog_json"); err != nil {
-				return err
-			}
-			os.Remove(catalogPath)
-			forget(at.key("codex.model"), at.key("codex.effort"), at.key("codex.provider"), at.key("codex.catalog"), at.key("codex.out"), at.key("codex.joined"), at.key("codex.beside"))
-			return nil
+			forget(at.key("codex.model"), at.key("codex.effort"), at.key("codex.provider"), at.key("codex.catalog"), at.key("codex.base_url"))
+			return edit.DelTOMLTop(path, "model")
 		}
 		// magpie API: magpie stays Codex's provider whichever model is the
 		// default, so one of Codex's own goes as magpie serves it, on the
@@ -633,7 +628,8 @@ func codexIn(at place) *Agent {
 			}
 			if !routed() {
 				stash(map[string]string{at.key("codex.model"): get("model"), at.key("codex.effort"): get("model_reasoning_effort"),
-					at.key("codex.provider"): get("model_provider"), at.key("codex.catalog"): get("model_catalog_json")})
+					at.key("codex.provider"): get("model_provider"), at.key("codex.catalog"): get("model_catalog_json"),
+					at.key("codex.base_url"): get("openai_base_url")})
 			}
 			// a ChatGPT account the Codex app holds (out of allowance and
 			// of credits) keeps it from sending at all, a magpie model's
@@ -769,7 +765,8 @@ func codexIn(at place) *Agent {
 			}
 			if !routed() {
 				stash(map[string]string{at.key("codex.model"): get("model"), at.key("codex.effort"): get("model_reasoning_effort"),
-					at.key("codex.provider"): get("model_provider"), at.key("codex.catalog"): get("model_catalog_json")})
+					at.key("codex.provider"): get("model_provider"), at.key("codex.catalog"): get("model_catalog_json"),
+					at.key("codex.base_url"): get("openai_base_url")})
 			}
 			forget(at.key("codex.out"))
 			if err := dropProvider(); err != nil {
@@ -940,10 +937,14 @@ func codexIn(at place) *Agent {
 		// the app-server behind the Codex app (and every codex TUI) builds
 		// its model list once, at start-up.
 		Notice: func() string {
+			var out []string
 			if Running(`(^|/)codex( |$)`) {
-				return "Codex builds its model list at start-up — restart the Codex app (and open codex sessions) to see this."
+				out = append(out, "Codex builds its model list at start-up — restart the Codex app (and open codex sessions) to see this.")
 			}
-			return ""
+			if b := stashLoad()[at.key("codex.base_url")]; routed() && foreignGateway(b) {
+				out = append(out, "magpie took Codex's endpoint over from another local gateway at "+b+"; picking one of Codex's own models hands it back.")
+			}
+			return strings.Join(out, " ")
 		},
 		Fields: []Field{
 			{
@@ -1455,4 +1456,23 @@ func codexReached(dir string, since time.Time) (at time.Time, to string, refused
 		}
 	}
 	return
+}
+
+func foreignGateway(u string) bool {
+	if u == "" || isCodexGateway(u) {
+		return false
+	}
+	p, err := url.Parse(u)
+	if err != nil {
+		return false
+	}
+	switch p.Hostname() {
+	case "127.0.0.1", "localhost", "::1":
+	default:
+		return false
+	}
+	// magpie's own gateway is not another program's, whichever port it was
+	// moved to and however the URL spells its host
+	_, ours, err := net.SplitHostPort(gateway.Addr())
+	return err != nil || p.Port() != ours
 }
