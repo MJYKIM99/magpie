@@ -44,6 +44,26 @@ func SetTOMLTop(path string, kvs ...KV) error {
 	}
 	lines := splitLines(string(raw))
 	for _, kv := range kvs {
+		// A missing root key belongs outside another tool's generated
+		// block. Insert it before the first root BEGIN marker; replacing
+		// an existing key still preserves its original location.
+		found, marker := false, -1
+		for i, line := range lines {
+			if tomlTable.MatchString(line) {
+				break
+			}
+			if m := tomlKV.FindStringSubmatch(line); m != nil && strings.Trim(m[1], `"`) == kv.Path {
+				found = true
+			}
+			if marker < 0 && strings.HasPrefix(strings.TrimSpace(line), "# BEGIN ") {
+				marker = i
+			}
+		}
+		if !found && marker >= 0 {
+			line := kv.Path + " = " + strconv.Quote(toString(kv.Value))
+			lines = append(append(append([]string{}, lines[:marker]...), line), lines[marker:]...)
+			continue
+		}
 		lines = setLine(lines, kv.Path, kv.Path+" = "+strconv.Quote(toString(kv.Value)), tomlTable, func(line string) (string, bool) {
 			m := tomlKV.FindStringSubmatch(line)
 			if m == nil {

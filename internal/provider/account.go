@@ -759,8 +759,11 @@ func codexAccount(home string) (Provider, bool) {
 func codexToken(ctx context.Context, path string) (tok, accountID string, err error) {
 	codexMu.Lock()
 	defer codexMu.Unlock()
+	// Decode both views from the same read: a concurrent account switch
+	// must not pair one account's ID with another account's access token.
+	b, readErr := os.ReadFile(path)
 	var a codexAuth
-	if !readJSON(path, &a) || a.Tokens.AccessToken == "" {
+	if readErr != nil || json.Unmarshal(b, &a) != nil || a.Tokens.AccessToken == "" {
 		return "", "", errors.New("Codex is signed out; run codex login")
 	}
 	accountID = a.Tokens.AccountID
@@ -771,23 +774,59 @@ func codexToken(ctx context.Context, path string) (tok, accountID string, err er
 		return a.Tokens.AccessToken, accountID, nil
 	}
 	var raw map[string]any
-	if !readJSON(path, &raw) {
+	if json.Unmarshal(b, &raw) != nil {
 		return "", "", errors.New("Codex is signed out; run codex login")
 	}
+	spent := codexRefreshToken(raw)
 	tok, err = codexRefresh(ctx, raw)
 	if err != nil {
 		return "", "", err
 	}
-	// keep every other field of the file as Codex CLI wrote it
-	if out, err := json.MarshalIndent(raw, "", "  "); err == nil {
-		os.WriteFile(path, append(out, '\n'), 0o600)
+	// Even in explicit managed mode, an intervening account switch or
+	// sign-out must not be undone by this request's older snapshot.
+	if !codexHolds(path, spent) {
+		return "", "", errors.New("Codex sign-in changed during refresh; retry with the current sign-in")
+	}
+	// This path requires explicit exclusive ownership. The comparison is
+	// a best-effort check, not a lock shared with other credential managers.
+	out, err := json.MarshalIndent(raw, "", "  ")
+	if err != nil {
+		return "", "", err
+	}
+	if err := writePrivate(path, append(out, '\n')); err != nil {
+		return "", "", fmt.Errorf("save refreshed Codex sign-in: %w", err)
 	}
 	return tok, accountID, nil
+}
+
+// codexRefreshToken is the refresh token of an auth.json-shaped sign-in, ""
+// when it has none.
+func codexRefreshToken(raw map[string]any) string {
+	toks, _ := raw["tokens"].(map[string]any)
+	s, _ := toks["refresh_token"].(string)
+	return s
+}
+
+// codexHolds reports whether the sign-in at path still carries the refresh
+// token spent, so that a write-back may replace it: one that has moved on
+// belongs to whoever moved it.
+func codexHolds(path, spent string) bool {
+	if spent == "" {
+		return false
+	}
+	var now map[string]any
+	if !readJSON(path, &now) {
+		return false
+	}
+	return codexRefreshToken(now) == spent
 }
 
 // codexRefresh renews the tokens of an auth.json-shaped sign-in in place,
 // every other field left as it was, and returns the new access token.
 func codexRefresh(ctx context.Context, raw map[string]any) (string, error) {
+	if !codexAuthManaged() {
+		return "", errCodexAuthExternal
+	}
 	toks, _ := raw["tokens"].(map[string]any)
 	if toks == nil {
 		toks = map[string]any{}

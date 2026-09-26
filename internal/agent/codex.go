@@ -49,88 +49,122 @@ func codex(home string) *Agent {
 		return catalog.Codex()
 	}
 	// keep the effort valid for the model; a fresh model gets its default.
-	settle := func() error {
-		ms := models()
-		model, effort := get("model"), get("model_reasoning_effort")
+	settle := func(target string) error {
+		value := func(k string) string { v, _ := edit.GetTOMLTop(target, k); return v }
+		ms := catalog.Codex()
+		if value("model_provider") == magpieID {
+			ms = magpieModels()
+		} else if isCodexGateway(value("openai_base_url")) {
+			ms = append(ms, magpieModels()...)
+		}
+		model, effort := value("model"), value("model_reasoning_effort")
 		if e := catalog.Efforts(ms, model); len(e) > 0 && !contains(e, effort) {
-			return edit.SetTOMLTop(path, edit.KV{Path: "model_reasoning_effort", Value: codexcat.DefaultEffort(e)})
+			return edit.SetTOMLTop(target, edit.KV{Path: "model_reasoning_effort", Value: codexcat.DefaultEffort(e)})
 		}
 		return nil
 	}
 	// dropProvider takes magpie out as a provider of Codex's.
-	dropProvider := func() error {
+	dropProvider := func(target string) error {
 		if !asProvider() {
 			return nil
 		}
-		if err := edit.DelTOMLTop(path, "model_provider", "model_catalog_json"); err != nil {
+		if err := edit.DelTOMLTop(target, "model_provider", "model_catalog_json"); err != nil {
 			return err
 		}
-		if err := edit.DelTOMLTable(path, "model_providers."+magpieID); err != nil {
+		if err := edit.DelTOMLTable(target, "model_providers."+magpieID); err != nil {
 			return err
 		}
-		os.Remove(catalogPath)
 		return nil
 	}
-	dropBase := func() error {
+	dropBase := func(target string) error {
 		if !viaBase() {
 			return nil
 		}
-		return edit.DelTOMLTop(path, "openai_base_url")
+		return edit.DelTOMLTop(target, "openai_base_url")
 	}
-	// restore hands back what magpie found before it took Codex over: the
-	// endpoint of another local gateway (see foreignGateway), the provider
-	// and the catalog that were there. Values of magpie's own are dropped
-	// rather than put back, and each stash entry is taken exactly once, so a
-	// stale value cannot be restored over one another program has since
-	// written.
-	//
-	// native says the user picked one of Codex's own models, so the effort
-	// that model had comes back with it. The model itself never does: the
-	// caller sets the one that was picked, and asking for the agent's own
-	// default leaves none — which is what its `default` means.
-	//
-	// Keys go back at the end of the root section, which can be inside
-	// another router's own marked block when that is where it keeps them.
-	// That is harmless for the two keys it manages itself — it rewrites them
-	// with the same values it gave magpie — and model_provider, the one it
-	// does not manage, costs only itself if that router later regenerates
-	// its block: Codex still reaches it through the base URL.
-	restore := func(native bool) error {
-		var back []edit.KV
-		add := func(key, value string) {
-			if value != "" {
-				back = append(back, edit.KV{Path: key, Value: value})
+	stashKeys := []string{"codex.model", "codex.effort", "codex.provider", "codex.catalog", "codex.base_url"}
+	// Returning control is one file transaction. Recovery data is consumed
+	// only after the replacement succeeds, so a failed write can be retried.
+	leave := func(v string) error {
+		owned, baseOwned, providerOwned := routed(), viaBase(), asProvider()
+		previous, err := stashRead()
+		if err != nil {
+			return err
+		}
+		err = edit.Transaction(path, func(target string) error {
+			var back []edit.KV
+			if owned {
+				if baseOwned {
+					if err := edit.DelTOMLTop(target, "openai_base_url"); err != nil {
+						return err
+					}
+				}
+				if providerOwned {
+					if err := edit.DelTOMLTop(target, "model_provider"); err != nil {
+						return err
+					}
+				}
+				if get("model_catalog_json") == catalogPath {
+					if err := edit.DelTOMLTop(target, "model_catalog_json"); err != nil {
+						return err
+					}
+				}
+				if err := edit.DelTOMLTable(target, "model_providers."+magpieID); err != nil {
+					return err
+				}
+				if isMagpie(edit.GetTOMLTable(target, "agents")["default_subagent_model"]) {
+					if err := edit.DelTOMLKey(target, "agents", "default_subagent_model"); err != nil {
+						return err
+					}
+				}
+				add := func(key, value string) {
+					// A value supplied by another tool while magpie was in use
+					// takes precedence over the old recovery snapshot.
+					if now, _ := edit.GetTOMLTop(target, key); now == "" && value != "" {
+						back = append(back, edit.KV{Path: key, Value: value})
+					}
+				}
+				if b := previous["codex.base_url"]; !isCodexGateway(b) {
+					add("openai_base_url", b)
+				}
+				if p := previous["codex.provider"]; p != magpieID {
+					add("model_provider", p)
+				}
+				if c := previous["codex.catalog"]; c != catalogPath {
+					add("model_catalog_json", c)
+				}
+				if v != "" && previous["codex.effort"] != "" {
+					back = append(back, edit.KV{Path: "model_reasoning_effort", Value: previous["codex.effort"]})
+				}
 			}
-		}
-		if b := unstash("codex.base_url"); b != "" && !isCodexGateway(b) {
-			add("openai_base_url", b)
-		}
-		if p := unstash("codex.provider"); p != "" && p != magpieID {
-			add("model_provider", p)
-		}
-		if c := unstash("codex.catalog"); c != "" && c != catalogPath {
-			add("model_catalog_json", c)
-		}
-		if native {
-			if e := unstash("codex.effort"); e != "" {
-				add("model_reasoning_effort", e)
+			if v == "" {
+				if err := edit.DelTOMLTop(target, "model"); err != nil {
+					return err
+				}
+			} else {
+				back = append(back, edit.KV{Path: "model", Value: v})
 			}
-		}
-		unstash("codex.model")
-		if len(back) == 0 {
+			if len(back) > 0 {
+				if err := edit.SetTOMLTop(target, back...); err != nil {
+					return err
+				}
+			}
+			if v != "" {
+				return settle(target)
+			}
 			return nil
+		})
+		if err != nil {
+			return err
 		}
-		return edit.SetTOMLTop(path, back...)
+		if owned {
+			_ = os.Remove(catalogPath)
+		}
+		return stashUpdate(nil, stashKeys...)
 	}
 	// the model spawned subagents start on, when not the parent's; one of
 	// magpie's goes when magpie steps out, as Codex could no longer find it
 	subagent := func() string { return edit.GetTOMLTable(path, "agents")["default_subagent_model"] }
-	dropSubagent := func() error {
-		if !isMagpie(subagent()) {
-			return nil
-		}
-		return edit.DelTOMLKey(path, "agents", "default_subagent_model")
-	}
 	modelOptions := func(withMagpie bool) []Option {
 		var own []Option
 		if p := get("model_provider"); p != "" && p != magpieID {
@@ -145,97 +179,62 @@ func codex(home string) *Agent {
 	}
 	set := func(v string) error {
 		if v == "" {
-			if err := dropSubagent(); err != nil {
-				return err
-			}
-			// magpie's own wiring comes out — its endpoint, its provider
-			// table, its catalog file — and Codex is left as installed
-			// otherwise
-			if err := dropBase(); err != nil {
-				return err
-			}
-			if err := edit.DelTOMLTop(path, "model", "model_provider", "model_catalog_json"); err != nil {
-				return err
-			}
-			if err := edit.DelTOMLTable(path, "model_providers."+magpieID); err != nil {
-				return err
-			}
-			os.Remove(catalogPath)
-			// what another program had there — a router's endpoint above all
-			// — goes back rather than staying deleted
-			if err := restore(false); err != nil {
-				return err
-			}
-			forget("codex.model", "codex.effort", "codex.provider", "codex.catalog", "codex.base_url")
-			return nil
+			return leave(v)
 		}
 		if isMagpie(v) {
 			if !routed() {
-				stash(map[string]string{"codex.model": get("model"), "codex.effort": get("model_reasoning_effort"),
+				if err := stashUpdate(map[string]string{"codex.model": get("model"), "codex.effort": get("model_reasoning_effort"),
 					"codex.provider": get("model_provider"), "codex.catalog": get("model_catalog_json"),
-					"codex.base_url": get("openai_base_url")})
+					"codex.base_url": get("openai_base_url")}); err != nil {
+					return err
+				}
 			}
-			// a ChatGPT account out of allowance keeps the Codex app from
-			// sending at all, a magpie model's request too; as a provider
-			// of Codex's own, magpie is past that
-			if codexSignedIn(dir) && !codexUsedUp() {
-				if err := dropProvider(); err != nil {
+			return edit.Transaction(path, func(target string) error {
+				// a ChatGPT account out of allowance keeps the Codex app from
+				// sending at all, a magpie model's request too; as a provider
+				// of Codex's own, magpie is past that
+				if codexSignedIn(dir) && !codexUsedUp() {
+					if err := dropProvider(target); err != nil {
+						return err
+					}
+					// the base URL is the built-in provider's, and a catalog
+					// file would stand in for the list magpie hands out
+					if err := edit.DelTOMLTop(target, "model_provider", "model_catalog_json"); err != nil {
+						return err
+					}
+					if err := edit.SetTOMLTop(target,
+						edit.KV{Path: "openai_base_url", Value: codexGatewayURL()},
+						edit.KV{Path: "model", Value: v},
+					); err != nil {
+						return err
+					}
+					return settle(target)
+				}
+				if err := dropBase(target); err != nil {
 					return err
 				}
-				// the base URL is the built-in provider's, and a catalog
-				// file would stand in for the list magpie hands out
-				if err := edit.DelTOMLTop(path, "model_provider", "model_catalog_json"); err != nil {
+				if err := edit.SetTOMLTable(target, "model_providers."+magpieID,
+					edit.KV{Path: "name", Value: "magpie"},
+					edit.KV{Path: "base_url", Value: gatewayV1()},
+					edit.KV{Path: "wire_api", Value: "responses"},
+					edit.KV{Path: "experimental_bearer_token", Value: gateway.Token},
+				); err != nil {
 					return err
 				}
-				if err := edit.SetTOMLTop(path,
-					edit.KV{Path: "openai_base_url", Value: codexGatewayURL()},
+				if err := edit.WriteAtomic(catalogPath, codexcat.Catalog(magpieModels())); err != nil {
+					return err
+				}
+				if err := edit.SetTOMLTop(target,
+					edit.KV{Path: "model_provider", Value: magpieID},
+					edit.KV{Path: "model_catalog_json", Value: catalogPath},
 					edit.KV{Path: "model", Value: v},
 				); err != nil {
 					return err
 				}
-				return settle()
-			}
-			if err := dropBase(); err != nil {
-				return err
-			}
-			if err := edit.SetTOMLTable(path, "model_providers."+magpieID,
-				edit.KV{Path: "name", Value: "magpie"},
-				edit.KV{Path: "base_url", Value: gatewayV1()},
-				edit.KV{Path: "wire_api", Value: "responses"},
-				edit.KV{Path: "experimental_bearer_token", Value: gateway.Token},
-			); err != nil {
-				return err
-			}
-			if err := edit.WriteAtomic(catalogPath, codexcat.Catalog(magpieModels())); err != nil {
-				return err
-			}
-			if err := edit.SetTOMLTop(path,
-				edit.KV{Path: "model_provider", Value: magpieID},
-				edit.KV{Path: "model_catalog_json", Value: catalogPath},
-				edit.KV{Path: "model", Value: v},
-			); err != nil {
-				return err
-			}
-			return settle()
+				return settle(target)
+			})
 		}
-		if routed() {
-			if err := dropBase(); err != nil {
-				return err
-			}
-			if err := dropProvider(); err != nil {
-				return err
-			}
-			if err := dropSubagent(); err != nil {
-				return err
-			}
-			if err := restore(true); err != nil {
-				return err
-			}
-		}
-		if err := edit.SetTOMLTop(path, edit.KV{Path: "model", Value: v}); err != nil {
-			return err
-		}
-		return settle()
+		return leave(v)
 	}
 
 	return &Agent{
@@ -260,7 +259,7 @@ func codex(home string) *Agent {
 			// a model that now has levels it had none of before (models.dev
 			// synced, a vendor's list fetched) keeps an effort it takes
 			if isMagpie(get("model")) {
-				return settle()
+				return settle(path)
 			}
 			return nil
 		},

@@ -2,6 +2,8 @@ VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 LDFLAGS  = -s -w -X main.version=$(VERSION)
 TAGS     = production
 TARGETS  = darwin/arm64 darwin/amd64 linux/amd64 linux/arm64 windows/amd64 windows/arm64
+LOCAL_VERSION ?= coexistence-dev-$(shell git rev-parse --short HEAD)
+LOCAL_APP ?= dist/Magpie-Coexistence.app
 
 # The GUI links the platform webview through cgo, so it is built natively.
 # `nogui` builds the terminal-only magpie, which cross-compiles anywhere.
@@ -16,6 +18,19 @@ ifeq ($(shell uname -s),Linux)
 endif
 
 .PHONY: build cli install test app icons release release-cli release-windows release-linux clean dev dev-once
+
+# A local macOS build keeps a distinct app identity and a non-release
+# version, so upstream automatic updates cannot replace the customization.
+.PHONY: local-app
+local-app:
+	@test "$$(uname -s)" = Darwin || { echo 'local-app requires macOS'; exit 1; }
+	@mkdir -p "$(LOCAL_APP)/Contents/MacOS" "$(LOCAL_APP)/Contents/Resources"
+	GOMAXPROCS=2 go build -p 1 -tags "$(TAGS)" -ldflags="-s -w -X main.version=$(LOCAL_VERSION)" -o "$(LOCAL_APP)/Contents/MacOS/magpie" .
+	@cp build/darwin/magpie.icns "$(LOCAL_APP)/Contents/Resources/magpie.icns"
+	@cp build/darwin/Info.plist "$(LOCAL_APP)/Contents/Info.plist"
+	@/usr/libexec/PlistBuddy -c 'Set :CFBundleName Magpie-Coexistence' -c 'Set :CFBundleDisplayName Magpie Coexistence' -c 'Set :CFBundleIdentifier local.magpie.coexistence' -c 'Set :CFBundleShortVersionString 0.0.0' -c 'Set :CFBundleVersion 1' -c 'Delete :CFBundleURLTypes' "$(LOCAL_APP)/Contents/Info.plist"
+	@codesign --force --sign - "$(LOCAL_APP)"
+	@echo "$(LOCAL_APP) · $(LOCAL_VERSION)"
 
 build:
 	go build -tags "$(TAGS)" -trimpath -ldflags="$(LDFLAGS)" -o magpie .

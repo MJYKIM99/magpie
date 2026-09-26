@@ -366,6 +366,9 @@ func Logins(agent string) []Login {
 // agent that are already running keep the account they started with until
 // they restart.
 func SwitchLogin(agent, user string) error {
+	if agent == "codex" && !codexAuthManaged() {
+		return errCodexAuthExternal
+	}
 	switch agent {
 	case "grok":
 		return switchGrokLogin(user)

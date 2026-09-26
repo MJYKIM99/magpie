@@ -88,6 +88,9 @@ func randomToken(n int) string {
 // An agent signed in with a CLI that isn't installed has it installed first:
 // the sign-in is then "installing", and gets its URL when that is done.
 func StartSignIn(agent string) (SignInState, error) {
+	if agent == "codex" && !codexAuthManaged() {
+		return SignInState{}, errCodexAuthExternal
+	}
 	s := &signInFlow{verifier: randomToken(48), state: randomToken(24), done: make(chan struct{})}
 	s.st = SignInState{ID: randomToken(9), Agent: agent, State: "waiting"}
 	cli, install := missingCLI(agent)
@@ -618,6 +621,9 @@ func codexExchange(ctx context.Context, code, verifier, redirect string) (savedL
 // too when it has no account yet, or had this one: the new tokens replace
 // the old, so one refresh token stays in one place.
 func addLogin(l savedLogin) (using bool, err error) {
+	if l.Agent == "codex" && !codexAuthManaged() {
+		return false, errCodexAuthExternal
+	}
 	loginsMu.Lock()
 	defer loginsMu.Unlock()
 	l.Seen = time.Now().UTC().Truncate(time.Second)

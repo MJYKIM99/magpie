@@ -39,6 +39,9 @@ func SetJSON(path string, kvs ...KV) error {
 	if len(bytes.TrimSpace(raw)) == 0 {
 		raw = []byte("{}\n")
 	}
+	if !json.Valid(jsonc.ToJSON(raw)) {
+		return fmt.Errorf("%s: invalid JSON", path)
+	}
 	for _, kv := range kvs {
 		raw, err = setJSONBytes(raw, kv.Path, kv.Value)
 		if err != nil {
@@ -191,6 +194,9 @@ func DelJSON(path string, keyPaths ...string) error {
 	raw, err := Read(path)
 	if err != nil || len(bytes.TrimSpace(raw)) == 0 {
 		return err
+	}
+	if !json.Valid(jsonc.ToJSON(raw)) {
+		return fmt.Errorf("%s: invalid JSON", path)
 	}
 	changed := false
 	for _, kp := range keyPaths {

@@ -12,6 +12,7 @@ import (
 )
 
 func TestSubscriptionsOnAtOnce(t *testing.T) {
+	t.Setenv("MAGPIE_CODEX_AUTH_OWNER", "magpie")
 	home := signIn(t)
 	// a saved account whose access token has run out: it's refreshed in
 	// logins.json when it's used, never put back into the agent's store

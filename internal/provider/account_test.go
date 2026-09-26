@@ -589,3 +589,118 @@ func TestKeychainText(t *testing.T) {
 		t.Fatal("hex that isn't JSON taken")
 	}
 }
+
+// codexAuthFile writes an about-to-expire Codex sign-in into a home, so
+// that the next request refreshes it.
+func codexAuthFile(t *testing.T, home, refresh string) string {
+	t.Helper()
+	path := filepath.Join(home, ".codex", "auth.json")
+	writeFile(t, path, map[string]any{
+		"auth_mode": "chatgpt",
+		"tokens": map[string]any{
+			"id_token": fakeJWT(map[string]any{"email": "me@example.com",
+				"https://api.openai.com/auth": map[string]any{"chatgpt_plan_type": "pro", "chatgpt_account_id": "acct-1"}}),
+			"access_token":  fakeJWT(map[string]any{"exp": float64(time.Now().Add(-time.Minute).Unix())}),
+			"refresh_token": refresh,
+			"account_id":    "acct-1",
+		},
+	})
+	return path
+}
+
+// codexTokenServer stands in for ChatGPT's token endpoint: it answers the
+// sign-in whose refresh token is `spend` with a rotation, after letting
+// `during` act as whatever else holds the account might.
+func codexTokenServer(t *testing.T, spend, access, refresh string, during func()) *httptest.Server {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]string
+		json.NewDecoder(r.Body).Decode(&body)
+		if body["grant_type"] != "refresh_token" || body["client_id"] != codexClientID || body["refresh_token"] != spend {
+			w.WriteHeader(400)
+			return
+		}
+		if during != nil {
+			during()
+		}
+		json.NewEncoder(w).Encode(map[string]any{"access_token": access, "refresh_token": refresh})
+	}))
+	t.Cleanup(srv.Close)
+	old := codexTokenURL
+	codexTokenURL = srv.URL
+	t.Cleanup(func() { codexTokenURL = old })
+	return srv
+}
+
+// A refresh writes its rotation back, so Codex CLI finds the sign-in that
+// is still valid.
+func TestCodexRefreshWritesItsRotationBack(t *testing.T) {
+	t.Setenv("MAGPIE_CODEX_AUTH_OWNER", "magpie")
+	home := signIn(t)
+	path := codexAuthFile(t, home, "rt.1.spent")
+	if err := os.Chmod(path, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	codexTokenServer(t, "rt.1.spent", "ours", "rt.1.ours", nil)
+
+	tok, accountID, err := codexToken(context.Background(), path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tok != "ours" || accountID != "acct-1" {
+		t.Fatalf("token %q account %q", tok, accountID)
+	}
+	var raw map[string]any
+	if !readJSON(path, &raw) {
+		t.Fatalf("auth.json unreadable: %s", path)
+	}
+	if codexRefreshToken(raw) != "rt.1.ours" {
+		t.Fatalf("rotation not written back: %v", raw)
+	}
+	if st, err := os.Stat(path); err != nil || st.Mode().Perm() != 0o600 {
+		t.Fatalf("auth.json permissions %v %v", st, err)
+	}
+}
+
+// An intervening sign-in wins even in explicit managed mode. The old
+// request fails instead of using or publishing its refreshed credentials.
+func TestCodexRefreshLeavesANewerSignInAlone(t *testing.T) {
+	t.Setenv("MAGPIE_CODEX_AUTH_OWNER", "magpie")
+	home := signIn(t)
+	path := codexAuthFile(t, home, "rt.1.spent")
+	codexTokenServer(t, "rt.1.spent", "ours", "rt.1.ours", func() {
+		// another holder rotates the account while ours is in flight
+		codexAuthFile(t, home, "rt.1.other")
+	})
+
+	tok, _, err := codexToken(context.Background(), path)
+	if err == nil || tok != "" {
+		t.Fatalf("a changed sign-in was still used: %v", err)
+	}
+	var raw map[string]any
+	if !readJSON(path, &raw) {
+		t.Fatalf("auth.json unreadable: %s", path)
+	}
+	if got := codexRefreshToken(raw); got != "rt.1.other" {
+		t.Fatalf("a newer sign-in was written over: refresh token is %q", got)
+	}
+}
+
+// A refresh token that is already gone from the file is not written back
+// either: whoever replaced it owns the sign-in now.
+func TestCodexRefreshDropsARotationForAGoneSignIn(t *testing.T) {
+	t.Setenv("MAGPIE_CODEX_AUTH_OWNER", "magpie")
+	home := signIn(t)
+	path := codexAuthFile(t, home, "rt.1.spent")
+	codexTokenServer(t, "rt.1.spent", "ours", "rt.1.ours", func() {
+		if err := os.Remove(path); err != nil {
+			t.Fatal(err)
+		}
+	})
+	if _, _, err := codexToken(context.Background(), path); err == nil {
+		t.Fatal("a removed sign-in was still used")
+	}
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Fatalf("a sign-in that was taken away was written back: %v", err)
+	}
+}

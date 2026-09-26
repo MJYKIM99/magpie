@@ -47,64 +47,88 @@ func claude(home string) *Agent {
 		}
 		return model()
 	}
-	var writeTiers func(main string, tiers map[string]string) error
+	var writeTiers func(target, main string, tiers map[string]string) error
+	stashKeys := []string{"claude.model", "claude.base_url", "claude.auth_token"}
+	for _, k := range claudeEnv {
+		stashKeys = append(stashKeys, "claude.env."+k)
+	}
 	set := func(v string) error {
-		if v == "" {
-			// Claude Code as installed: Anthropic's own endpoint and model
-			keys := []string{"model"}
+		owned := routed()
+		previous, err := stashRead()
+		if err != nil {
+			return err
+		}
+		if isMagpie(v) && !owned {
+			saved := map[string]string{
+				"claude.model": model(), "claude.base_url": env("ANTHROPIC_BASE_URL"),
+				"claude.auth_token": env("ANTHROPIC_AUTH_TOKEN"),
+			}
 			for _, k := range claudeEnv {
-				keys = append(keys, "env."+k)
+				saved["claude.env."+k] = env(k)
 			}
-			forget("claude.model", "claude.base_url", "claude.auth_token")
-			return edit.DelJSON(path, keys...)
-		}
-		if isMagpie(v) {
-			if !routed() {
-				stash(map[string]string{
-					"claude.model":      model(),
-					"claude.base_url":   env("ANTHROPIC_BASE_URL"),
-					"claude.auth_token": env("ANTHROPIC_AUTH_TOKEN"),
-				})
-			}
-			// tiers that followed the old model follow the new one; the
-			// ones given a model of their own keep it
-			tiers := map[string]string{}
-			for _, t := range claudeTiers {
-				tiers[t] = v
-				if w := env(tierEnv(t)); routed() && w != "" && w != env("ANTHROPIC_MODEL") && isMagpie(w) {
-					tiers[t] = w
-				}
-			}
-			return writeTiers(v, tiers)
-		}
-		if routed() {
-			keys := make([]string, len(claudeEnv))
-			for i, k := range claudeEnv {
-				keys[i] = "env." + k
-			}
-			if err := edit.DelJSON(path, keys...); err != nil {
+			if err := stashUpdate(saved); err != nil {
 				return err
 			}
-			unstash("claude.model")
-			var back []edit.KV
-			if u := unstash("claude.base_url"); u != "" {
-				back = append(back, edit.KV{Path: "env.ANTHROPIC_BASE_URL", Value: u})
+		}
+		err = edit.Transaction(path, func(target string) error {
+			if isMagpie(v) {
+				tiers := map[string]string{}
+				for _, t := range claudeTiers {
+					tiers[t] = v
+					if w := env(tierEnv(t)); owned && w != "" && w != env("ANTHROPIC_MODEL") && isMagpie(w) {
+						tiers[t] = w
+					}
+				}
+				return writeTiers(target, v, tiers)
 			}
-			if t := unstash("claude.auth_token"); t != "" {
-				back = append(back, edit.KV{Path: "env.ANTHROPIC_AUTH_TOKEN", Value: t})
-			}
-			if len(back) > 0 {
-				if err := edit.SetJSON(path, back...); err != nil {
-					return err
+			// Once another tool has taken the endpoint, its configuration
+			// wins. Repeated default must not delete that tool's relay.
+			if owned {
+				for _, k := range claudeEnv {
+					current := env(k)
+					want := previous["claude.env."+k]
+					switch k {
+					case "ANTHROPIC_BASE_URL":
+						want = previous["claude.base_url"]
+						if want == gateway.URL() {
+							want = ""
+						}
+					case "ANTHROPIC_AUTH_TOKEN":
+						if current != "" && current != gateway.Token {
+							continue
+						}
+						want = previous["claude.auth_token"]
+						if want == gateway.Token {
+							want = ""
+						}
+					default:
+						if current != "" && !isMagpie(current) {
+							continue
+						}
+					}
+					if want == "" {
+						if err := edit.DelJSON(target, "env."+k); err != nil {
+							return err
+						}
+					} else if err := edit.SetJSON(target, edit.KV{Path: "env." + k, Value: want}); err != nil {
+						return err
+					}
 				}
 			}
+			if v == "" {
+				return edit.DelJSON(target, "model")
+			}
+			return edit.SetJSON(target, edit.KV{Path: "model", Value: v})
+		})
+		if err != nil || isMagpie(v) {
+			return err
 		}
-		return edit.SetJSON(path, edit.KV{Path: "model", Value: v})
+		return stashUpdate(nil, stashKeys...)
 	}
 
 	// writeTiers routes Claude Code through the gateway with main as its
 	// model and each tier on the model given.
-	writeTiers = func(main string, tiers map[string]string) error {
+	writeTiers = func(target, main string, tiers map[string]string) error {
 		kvs := []edit.KV{
 			{Path: "env.ANTHROPIC_BASE_URL", Value: gateway.URL()},
 			{Path: "env.ANTHROPIC_AUTH_TOKEN", Value: gateway.Token},
@@ -119,13 +143,13 @@ func claude(home string) *Agent {
 		}
 		if !same {
 			// one model for every subagent would override the tiers they ask for
-			if err := edit.DelJSON(path, "env.CLAUDE_CODE_SUBAGENT_MODEL"); err != nil {
+			if err := edit.DelJSON(target, "env.CLAUDE_CODE_SUBAGENT_MODEL"); err != nil {
 				return err
 			}
 		} else {
 			kvs = append(kvs, edit.KV{Path: "env.CLAUDE_CODE_SUBAGENT_MODEL", Value: main})
 		}
-		return edit.SetJSON(path, kvs...)
+		return edit.SetJSON(target, kvs...)
 	}
 
 	fields := []Field{{
@@ -181,7 +205,7 @@ func claude(home string) *Agent {
 				if v == "" {
 					tiers[tier] = main
 				}
-				return writeTiers(main, tiers)
+				return edit.Transaction(path, func(target string) error { return writeTiers(target, main, tiers) })
 			},
 			Options: func(map[string]string) []Option {
 				if !routed() {

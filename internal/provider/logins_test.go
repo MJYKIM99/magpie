@@ -33,6 +33,7 @@ func loginUsers(ls []Login) (users []string, active string) {
 }
 
 func TestCodexLogins(t *testing.T) {
+	t.Setenv("MAGPIE_CODEX_AUTH_OWNER", "magpie")
 	home := signIn(t)
 	rememberLogins(true)
 	codexSignIn(t, home, "work@example.com", "r-work")

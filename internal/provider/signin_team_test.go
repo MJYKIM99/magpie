@@ -83,6 +83,7 @@ func TestSaveKeepsAccountIDs(t *testing.T) {
 // A ChatGPT Team workspace on the email of a personal plan is an account of
 // its own: added beside the personal one, and either can be switched to.
 func TestCodexTeamWorkspaceBesidePersonal(t *testing.T) {
+	t.Setenv("MAGPIE_CODEX_AUTH_OWNER", "magpie")
 	home := signIn(t) // me@example.com, personal Pro, workspace acct-1
 	fake := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode(map[string]any{
@@ -131,6 +132,7 @@ func TestCodexTeamWorkspaceBesidePersonal(t *testing.T) {
 // A workspace saved under its bare email, before workspaces were told
 // apart, is the same account as the one named with its plan.
 func TestCodexLoginSavedBeforeWorkspaces(t *testing.T) {
+	t.Setenv("MAGPIE_CODEX_AUTH_OWNER", "magpie")
 	auth := func(plan, ws string) json.RawMessage {
 		b, _ := json.Marshal(map[string]any{"tokens": map[string]any{"account_id": ws,
 			"id_token": fakeJWT(map[string]any{"email": "me@example.com", "https://api.openai.com/auth": map[string]any{"chatgpt_plan_type": plan}})}})

@@ -12,6 +12,7 @@ import (
 )
 
 func TestRenewLogins(t *testing.T) {
+	t.Setenv("MAGPIE_CODEX_AUTH_OWNER", "magpie")
 	home := signIn(t)
 	rememberLogins(true) // me@ saved…
 	codexSignIn(t, home, "work@example.com", "r-work")

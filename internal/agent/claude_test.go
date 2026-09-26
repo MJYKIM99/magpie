@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/yetone/magpie/internal/edit"
+	"github.com/yetone/magpie/internal/gateway"
 	"github.com/yetone/magpie/internal/provider"
 )
 
@@ -70,5 +71,67 @@ func TestClaudeTiers(t *testing.T) {
 	}
 	if v, _ := edit.GetJSON(path, "theme"); v != "dark" {
 		t.Fatal("theme lost")
+	}
+}
+
+// Coexistence: a relay another tool put Claude Code on comes back when
+// magpie steps out, whichever way out is taken, and the settings that are
+// nobody's business but the user's — the proxy another tool installed
+// above all — are never touched.
+func TestClaudeHandsBackAnotherToolsRelay(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
+	t.Setenv("XDG_CACHE_HOME", filepath.Join(home, ".cache"))
+	if err := provider.Save(provider.Provider{ID: "deepseek", Name: "DeepSeek", Chat: "https://api.deepseek.com/v1", Key: "k", Models: []string{"pro"}}); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(home, ".claude", "settings.json")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	relay := `{"theme":"dark","env":{"ANTHROPIC_BASE_URL":"https://relay.example.com",` +
+		`"ANTHROPIC_AUTH_TOKEN":"relay-token","HTTPS_PROXY":"http://127.0.0.1:17899","NO_PROXY":"127.0.0.1"}}`
+	if err := os.WriteFile(path, []byte(relay), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	a := claude(home)
+	env := func(k string) string { v, _ := edit.GetJSON(path, "env."+k); return v }
+	relayIsBack := func(step string) {
+		t.Helper()
+		if env("ANTHROPIC_BASE_URL") != "https://relay.example.com" || env("ANTHROPIC_AUTH_TOKEN") != "relay-token" {
+			t.Fatalf("%s: the relay was not handed back (%q, %q)", step, env("ANTHROPIC_BASE_URL"), env("ANTHROPIC_AUTH_TOKEN"))
+		}
+		if env("HTTPS_PROXY") != "http://127.0.0.1:17899" || env("NO_PROXY") != "127.0.0.1" {
+			t.Fatalf("%s: the user's proxy settings moved: %v", step, a.Values())
+		}
+	}
+
+	if err := a.Field("model").Set("deepseek/pro"); err != nil {
+		t.Fatal(err)
+	}
+	if env("ANTHROPIC_BASE_URL") != gateway.URL() || env("ANTHROPIC_AUTH_TOKEN") != gateway.Token {
+		t.Fatalf("not routed through magpie: %v", a.Values())
+	}
+	if env("HTTPS_PROXY") != "http://127.0.0.1:17899" {
+		t.Fatal("routing dropped the user's proxy settings")
+	}
+
+	// one of Claude Code's own models
+	if err := a.Field("model").Set("claude-sonnet-4-5"); err != nil {
+		t.Fatal(err)
+	}
+	relayIsBack("own model")
+
+	// and the agent's own default
+	if err := a.Field("model").Set("deepseek/pro"); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.Field("model").Set(""); err != nil {
+		t.Fatal(err)
+	}
+	relayIsBack("reset")
+	if v, _ := edit.GetJSON(path, "model"); v != "" {
+		t.Fatalf("reset left a model behind: %q", v)
 	}
 }
