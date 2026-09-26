@@ -15,6 +15,7 @@ import (
 // user uses Codex as): the gateway still tries the first first, In order,
 // and the one Codex is signed in to at its own place behind it.
 func TestKeptLoginStandsAtItsPlace(t *testing.T) {
+	t.Setenv("MAGPIE_CODEX_AUTH_OWNER", "magpie")
 	codexSignedIn(t, "spare@example.com")
 	var tried []string
 	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

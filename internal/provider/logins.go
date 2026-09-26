@@ -905,6 +905,9 @@ func loginRoom(agent string) func(user string) (known, spent bool) {
 // they restart; so does Codex's background app-server, which new Codex
 // sessions attach to (CodexDaemonStale says when it is).
 func SwitchLogin(agent, user string) error {
+	if agent == "codex" && !codexAuthManaged() {
+		return errCodexAuthExternal
+	}
 	// the user's own choice: magpie doesn't sign the agent back in to the
 	// account it moved it off
 	if slices.Contains(loginAgents, agent) {
@@ -1088,6 +1091,14 @@ func putClaudeLogin(l savedLogin) error {
 // instead, as `codex logout` does (mamba on Discord: a single Codex account
 // couldn't be removed at all).
 func ForgetLogin(agent, user string) error {
+	if agent == "codex" && !codexAuthManaged() {
+		loginsMu.Lock()
+		live, ok := liveLogin(agent)
+		loginsMu.Unlock()
+		if ok && strings.EqualFold(live.User, user) {
+			return errCodexAuthExternal
+		}
+	}
 	if pp, ok := pluginOfAgent(agent); ok {
 		return forgetPluginLogin(pp, user)
 	}
@@ -1167,6 +1178,9 @@ func forgetLogin(agent, user string) (signedOut bool, err error) {
 	defer loginsMu.Unlock()
 	ls := readLogins()
 	if live, ok := liveLogin(agent); ok && strings.EqualFold(live.User, user) {
+		if agent == "codex" && !codexAuthManaged() {
+			return false, errCodexAuthExternal
+		}
 		other := slices.ContainsFunc(ls, func(l savedLogin) bool { return l.Agent == agent && !strings.EqualFold(l.User, user) })
 		if agent != "codex" || other {
 			return false, &SignedInError{Agent: agent, User: user}

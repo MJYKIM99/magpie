@@ -91,6 +91,7 @@ func TestClaudeSignInAddsAnAccount(t *testing.T) {
 }
 
 func TestCodexSignInSignsInWhenSignedOut(t *testing.T) {
+	t.Setenv("MAGPIE_CODEX_AUTH_OWNER", "magpie")
 	home := claudeHome(t)
 	fake := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		r.ParseForm()

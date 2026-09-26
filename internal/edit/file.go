@@ -39,6 +39,10 @@ func Read(path string) ([]byte, error) {
 // written in place, see writeInPlace. Once written, temp files earlier
 // writes of path left behind go, see removeStaleTemps.
 func WriteAtomic(path string, data []byte) error {
+	return writeAtomic(path, data, false)
+}
+
+func writeAtomic(path string, data []byte, private bool) error {
 	defer filememo.Forget() // read again, where a request holds it
 	path, err := Target(path)
 	if err != nil {
@@ -47,6 +51,12 @@ func WriteAtomic(path string, data []byte) error {
 	if hardLinked(path) {
 		f, err := os.OpenFile(path, os.O_WRONLY, 0)
 		if err == nil {
+			if private {
+				if err := f.Chmod(0o600); err != nil {
+					f.Close()
+					return err
+				}
+			}
 			if err := writeInPlace(f, data); err != nil {
 				return err
 			}
@@ -64,6 +74,9 @@ func WriteAtomic(path string, data []byte) error {
 	mode := fs.FileMode(0o644)
 	if st, err := os.Stat(path); err == nil {
 		mode = st.Mode().Perm()
+	}
+	if private {
+		mode = 0o600
 	}
 	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, 0o755); err != nil {

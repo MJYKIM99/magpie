@@ -10,6 +10,8 @@ endif
 # A tag may hold $, ( or `, which the shell lines below would run: the
 # version keeps only what a version is spelled with.
 VERSION ?= $(or $(shell git describe --tags --always --dirty 2>/dev/null | tr -cd 'A-Za-z0-9._+-'),dev)
+LOCAL_VERSION ?= coexistence-dev-$(shell git rev-parse --short HEAD)
+LOCAL_APP ?= dist/Magpie-Coexistence.app
 LDFLAGS  = -s -w -X main.version=$(VERSION)
 TAGS     = production
 TARGETS  = darwin/arm64 darwin/amd64 linux/amd64 linux/arm64 windows/amd64 windows/arm64 android/arm64
@@ -138,3 +140,17 @@ dev:
 dev-once:
 	@go build -tags dev -o magpie-dev . && echo "  magpie-dev · UI from internal/gui/assets, reload on save · gateway $(DEV_ADDR)"
 	@MAGPIE_ADDR=$(DEV_ADDR) MAGPIE_DEV_UI=$(DEV_UI) ./magpie-dev app
+
+# A local macOS build keeps a distinct app identity and a non-release
+# version, so upstream automatic updates cannot replace the customization.
+.PHONY: local-app
+local-app:
+	@test "$$(uname -s)" = Darwin || { echo 'local-app requires macOS'; exit 1; }
+	@mkdir -p "$(LOCAL_APP)/Contents/MacOS" "$(LOCAL_APP)/Contents/Resources"
+	GOMAXPROCS=2 go build -p 1 -tags "$(TAGS)" -ldflags="-s -w -X main.version=$(LOCAL_VERSION)" -o "$(LOCAL_APP)/Contents/MacOS/magpie" .
+	@cp build/darwin/magpie.icns "$(LOCAL_APP)/Contents/Resources/magpie.icns"
+	@cp build/darwin/Assets.car "$(LOCAL_APP)/Contents/Resources/Assets.car"
+	@cp build/darwin/Info.plist "$(LOCAL_APP)/Contents/Info.plist"
+	@/usr/libexec/PlistBuddy -c 'Set :CFBundleName Magpie-Coexistence' -c 'Set :CFBundleDisplayName Magpie Coexistence' -c 'Set :CFBundleIdentifier local.magpie.coexistence' -c 'Set :CFBundleShortVersionString 0.0.0' -c 'Set :CFBundleVersion 1' -c 'Delete :CFBundleURLTypes' "$(LOCAL_APP)/Contents/Info.plist"
+	@codesign --force --sign - "$(LOCAL_APP)"
+	@echo "$(LOCAL_APP) · $(LOCAL_VERSION)"

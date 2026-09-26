@@ -115,6 +115,7 @@ func TestCodexOwnModelMovesToNextAccount(t *testing.T) {
 // (provider.SwitchWhenSpent): the one out still rests, now beside it,
 // and the one it is on now doesn't take that rest over.
 func TestCodexSwitchedAccountRestsAsItself(t *testing.T) {
+	t.Setenv("MAGPIE_CODEX_AUTH_OWNER", "magpie")
 	codexSignedIn(t, "spare@example.com")
 	var tried, models []string
 	usedUp(t, &tried, &models)

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net"
+	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -82,8 +83,12 @@ func codex(home string) *Agent { return codexIn(here(home)) }
 // distro's (see wsl.go).
 func codexIn(at place) *Agent {
 	dir := filepath.Join(at.home, ".codex")
-	path := filepath.Join(dir, "config.toml")
-	catalogPath := filepath.Join(dir, "magpie-models.json")
+	return codexConfig(at, filepath.Join(dir, "config.toml"), filepath.Join(dir, "magpie-models.json"), &recoveryState{path: stashPath()}, true)
+}
+
+func codexConfig(at place, path, catalogPath string, state *recoveryState, transactional bool) *Agent {
+	dir := filepath.Join(at.home, ".codex")
+	stashLoad, stash, forget, unstash := state.load, state.set, state.forget, state.take
 	get := func(k string) string { v, _ := edit.GetTOMLTop(path, k); return v }
 	// this machine's Codex reaches the gateway at the address its config
 	// gives, when that is magpie's on another host: the Codex app on
@@ -97,7 +102,7 @@ func codexIn(at place) *Agent {
 	// the catalog as the config names it: relative to config.toml on
 	// Windows, where a C:\ path is no file to the same Codex reading it
 	// from WSL (#816); Codex reads a relative one from its home
-	catalogRef := at.native(catalogPath)
+	catalogRef := at.native(filepath.Join(dir, "magpie-models.json"))
 	if at.spell == nil && runtime.GOOS == "windows" {
 		catalogRef = filepath.Base(catalogPath)
 	}
@@ -718,7 +723,7 @@ func codexIn(at place) *Agent {
 		return settle()
 	}
 
-	a := atomic(&Agent{
+	a := &Agent{
 		ID: "codex", Name: "Codex", Icon: "codex-color", Bin: "codex", Dir: dir, Path: path,
 		UA: []string{"codex"},
 		// Codex as it was before magpie: its default puts it back as
@@ -1105,12 +1110,17 @@ func codexIn(at place) *Agent {
 				},
 			},
 		},
-	}, path, catalogPath)
+	}
 	// this machine's Codex: the address its config keeps is tried (Drift),
 	// and moved to WSL's new one when that changed (#1013)
 	if at.spell == nil {
 		a.reach = at.base
 		a.move = func(from, to string) error { return codexMoveGateway(path, from, to) }
+	}
+	if transactional {
+		return coexistence(a, []string{path, catalogPath, state.path}, state, func(paths []string, state *recoveryState) *Agent {
+			return codexConfig(at, paths[0], paths[1], state, false)
+		})
 	}
 	return a
 }
@@ -1476,3 +1486,5 @@ func foreignGateway(u string) bool {
 	_, ours, err := net.SplitHostPort(gateway.Addr())
 	return err != nil || p.Port() != ours
 }
+
+func isCodexGateway(u string) bool { return isCodexGatewayOn(u, here("").host()) }

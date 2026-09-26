@@ -32,6 +32,19 @@ something else shows up as drift.
 4. **Drift.** As the Agents page is drawn, `Drift` compares the config with `applied.json`. It runs `Check` first, then each field. When the config is right and points at an address off loopback (a WSL twin under NAT, or this machine's Codex at an address the user kept, #816), it tries that address ([`reach.go`](../../internal/agent/reach.go)): in the background, at most every 20 s, never waited for. When nothing answers there while the gateway answers on loopback, the drift is `unreachable` (#1013), with what has to listen there: Share on local network, the user's portproxy, Windows' firewall. Then it checks whether the agent's latest use (`LastUsed`, `Reached`) reached the gateway.
 5. **Disconnect.** `Disconnect` puts back what the stash kept and forgets the record.
 
+## Local coexistence branch
+
+The local `codex/magpie-router-coexistence` branch keeps the upstream adapters,
+but stages Codex/Claude configuration and recovery state together
+([`coexistence.go`](../../internal/agent/coexistence.go),
+[`transaction.go`](../../internal/edit/transaction.go)). Failed edits retain
+both files for retry. Codex's model default restores an external endpoint,
+provider and catalog, while removing the selected model. Repeated defaults
+and later edits by another owner preserve that owner's settings. The upstream
+magpie provider table remains available to historical threads. See
+[`LOCAL_CUSTOMIZATION.md`](../../LOCAL_CUSTOMIZATION.md) for ownership and
+verification limits.
+
 ## Constraints and failure behavior
 
 - magpie only removes what it wrote. Anything else in an agent's config stays as it was.

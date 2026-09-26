@@ -458,8 +458,9 @@ func TestCodexHandsBackAnotherRoutersConfig(t *testing.T) {
 	if !strings.Contains(cfg, "[model_providers.custom]") {
 		t.Errorf("another router's provider table lost:\n%s", cfg)
 	}
-	if strings.Contains(cfg, "magpie") {
-		t.Errorf("magpie left something of its own behind:\n%s", cfg)
+	// Upstream retains this table so existing threads can still resume.
+	if !strings.Contains(cfg, "[model_providers.magpie]") {
+		t.Errorf("historical threads lost their provider table:\n%s", cfg)
 	}
 
 	// and it holds up over a second round trip: the stash is taken once per
@@ -488,8 +489,8 @@ func TestCodexDefaultHandsBackAnotherRoutersConfig(t *testing.T) {
 		t.Fatal(err)
 	}
 	cfg := read()
-	if strings.Contains(cfg, "[model_providers.magpie]") {
-		t.Errorf("magpie's own provider table left behind:\n%s", cfg)
+	if !strings.Contains(cfg, "[model_providers.magpie]") {
+		t.Errorf("historical threads lost their provider table:\n%s", cfg)
 	}
 	if _, err := os.Stat(filepath.Join(home, ".codex", "magpie-models.json")); err == nil {
 		t.Error("magpie's catalog file left behind")
@@ -521,9 +522,10 @@ func TestCodexResetWithNoOtherGateway(t *testing.T) {
 	if err := cx.Fields[0].Set(""); err != nil {
 		t.Fatal(err)
 	}
-	if cfg := read(); strings.Contains(cfg, "openai_base_url") || strings.Contains(cfg, "model_provider") ||
-		strings.Contains(cfg, "model") || strings.Contains(cfg, "magpie") {
-		t.Fatalf("reset left something behind:\n%s", cfg)
+	for _, key := range []string{"openai_base_url", "model_provider", "model_catalog_json", "model"} {
+		if got := top(t, home, key); got != "" {
+			t.Errorf("reset left %s = %q:\n%s", key, got, read())
+		}
 	}
 }
 
