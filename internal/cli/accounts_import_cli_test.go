@@ -25,6 +25,7 @@ func importJWT(claims map[string]any) string {
 // is signed out, imports nothing until that is agreed to, takes several
 // files at once, names a file that held no account, and only reads them.
 func TestAccountsImport(t *testing.T) {
+	t.Setenv("MAGPIE_CODEX_AUTH_OWNER", "magpie")
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("USERPROFILE", home)
