@@ -72,3 +72,25 @@ GOOS=windows CGO_ENABLED=0 GOMAXPROCS=2 go vet -p 1 ./...
 - 隔离 HOME 的全仓库测试：7,886 项通过、19 项按条件跳过、零失败。macOS/Linux/Windows vet 与 Linux/Windows 构建通过；改动的 Go 文件格式检查和 `git diff --check` 通过。两个网关账号切换测试显式启用伪造登录的独占管理模式，默认账号保护不变。
 - 保留共享 Go 模块/构建缓存以供后续构建；任务运行时位于 `.git/magpie-validation-runtime`，只用于复现隔离插件测试。跨平台临时二进制已移除；macOS 本地产物与来源清单保存在 `dist/`。
 - 真实账号、跨设备同步、Windows/Linux 实机和 GUI Playwright 未验证；这次没有修改上游 GUI 资源。
+
+## 2026-10-13 OpenCode Go DeepSeek 后端
+
+Codex 的入口和模型目录继续由 Codex Router 管理。新增路线为 `Codex → Router → Magpie → OpenCode Go`，模型名为 **DeepSeek V4.1 Flash (via Magpie)**，路由标识 `magpie-go/opencode-go/deepseek-v4.1-flash`，默认推理强度为 `max`。原有 Web GPT 和直接 OpenCode Go 路线保留。当前接入只服务 Codex；Claude 的配置和订阅登录未纳入接入。
+
+Router 使用本机 `http://127.0.0.1:3425/v1` 的 Responses 接口，以及 Magpie 为它创建的调用密钥。该密钥仅允许 `opencode-go/deepseek-v4.1-flash`；实际 Go Key 在 Magpie 本机表单添加，文档和代码都不保存密钥。Magpie 的该供应商没有配置跨供应商 fallback，Router 的全局跨模型 failover 当前也是关闭状态。模型不可用时应返回错误，不切到直接 DeepSeek API 或订阅账号。
+
+供应商和模型存入 Router 的 `generic-providers.json`、`user-models.json` 和 `model-picker.json` 本机覆盖层，复用其配置发布及服务重启事务；Router 仓库源代码没有为此接入而修改。请保持 Magpie 运行，并在 Codex 模型选择器选择上面的模型。不要同时在 Magpie 的 Codex 页面执行连接或模型切换，以免两个配置管理器轮流改写 Codex 的入口。
+
+初次真实验证发现当前共存版会把没有推理记录的工具历史原样传给 OpenCode Go，得到 400 `reasoning_text ... must be passed back`。共存分支回移上游 `f4cc7459` 的 Responses 修复：补齐空缺，并把每个调用工具或接续工具结果的助手步骤的推理放在最前；修复同时覆盖透传和协议转换。既有推理、加密字段和非 DeepSeek 的协议行为由回归验证保留。Chat 和 Messages 的同类上游修复未回移，不能据此宣称 Claude 已接入。
+
+本次是必要兼容修复和本机接入，**没有完成全量上游升级**。基线仍为 `5e611c5257b7928df075f0bebd297266cfe6f2f1`，候选版本为 `coexistence-dev-5e611c52-deepseek-ca57ef0040`；精确源文件哈希、签名和二进制 SHA-256 记录在 `.git/magpie-router-20261013-evidence/artifact-manifest.json`，安装结果记录在同目录的 `installation-manifest.json`。
+
+验证使用隔离 HOME，只复制用户明确选择的 OpenCode Go 供应商；Codex、Claude 和其他订阅凭据没有进入测试环境。真实完整链路验证了文本、工具调用、无推理记录的工具结果和压缩；一次流式检查未通过，聚焦复查收到了正确文本和 `response.completed`。实际命名空间工具调用及带真实推理的第二轮工具往返通过。另有假服务验证调用密钥范围及调用方 ChatGPT 凭据不进入供应商请求。图片、多代理协作、Claude 接入以及其他操作系统实机均未验证；GUI 资源没有修改。
+
+配置及旧安装包备份位于 `~/.codex/codex-router/magpie-integration-backups/20261013-1791914604409`。回滚配置时必须保留接入后用户的其他改动，按路由标识移除本次覆盖层记录并通过 Router 重新发布；不要直接用旧文件覆盖正在使用的配置。旧包用于回滚本次二进制兼容补丁。验证日志、发布结果和临时进程清理记录保存在 `.git/magpie-router-20261013-evidence/`。
+
+安装和发布后检查：全仓库隔离回归 7,891 项通过、19 项条件跳过、零失败；三平台 vet 和构建通过，格式及 diff 检查通过。Router 的真实模型列表接口返回 200 并列出新增模型，调用凭据就绪。原目录的 13 个模型全部保留；新目录共 67 项，包含此前配置的外部路线及本次路线，没有把原有可见模型隐藏。
+
+发布时发现原 Codex 的 `custom` provider 表指向旧式 Router 地址，导致目录只生成原生模型。首次发布校验失败后事务回滚。随后通过 Router 自带 `signed-enable` 管理器迁移到带调用方权限的地址，再成功发布；根级 `model` 和 `model_provider` 保持原值，登录模式仍需 Codex 自己的登录。迁移后的对比还发现原有 `service_tier = "priority"` 丢失，已恢复到托管块之外。最终 TOML 对比只剩 `custom` 和 Router 相关 provider 表的预期变化，其余配置保留；Codex 登录及 Claude 配置/登录文件的大小、mtime、inode 均未变化。完整敏感地址不得粘贴到聊天或提交。
+
+构建目录保留约 43 MB 的候选应用，备份目录保留同等大小的旧应用；共享 Go 缓存供后续构建复用。临时跨平台二进制和测试服务已清理，正式 Magpie 与 Router 后台服务继续运行。Codex 应用未重启；用户重新打开后可选择新增模型。

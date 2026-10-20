@@ -681,15 +681,23 @@ func replaysReasoning(model, host string) bool {
 		!strings.HasSuffix(host, ".openai.azure.com")
 }
 
+// A nonempty placeholder survives relays when a client kept no thinking.
+const responsesNoReasoning = " "
+
 // withReasoningText gives each reasoning item in a Responses request that
-// carries no reasoning_text its summary as one, for an upstream that wants
-// the reasoning back (replaysReasoning). Codex sends an item back as it got
-// it, and one from a turn magpie translated, or another provider served,
-// has only a summary: passed on as it is, DeepSeek refuses the whole
-// request with "The reasoning_text in the thinking mode must be passed back
-// to the API" (#1104). An item with neither is left as it is.
+// carries no reasoning_text its summary as one, else responsesNoReasoning, and has
+// each step that needs one lead with a reasoning item (reasonFirst), for an
+// upstream that wants the reasoning back (replaysReasoning). Codex sends an
+// item back as it got it: one from a turn magpie translated has only a
+// summary, one the ChatGPT backend sealed has only encrypted_content, and a
+// turn another model in a mixed group served may have no reasoning item at
+// all. DeepSeek refuses the whole request over any of them, and over an
+// empty reasoning_text, with "The `reasoning_text` in the thinking mode must
+// be passed back to the API" (#1104, #1592, #1822). A body with nothing to
+// give comes back byte for byte.
 func withReasoningText(body []byte) []byte {
-	if !bytes.Contains(body, []byte(`"reasoning"`)) {
+	if !bytes.Contains(body, []byte(`"reasoning"`)) && !bytes.Contains(body, []byte(`_call"`)) &&
+		!bytes.Contains(body, []byte(`_output"`)) {
 		return body
 	}
 	var q map[string]json.RawMessage
@@ -701,13 +709,19 @@ func withReasoningText(body []byte) []byte {
 		return body
 	}
 	changed := false
+	kinds := make([]stepKind, len(items))
 	for i, raw := range items {
 		var it struct {
 			Type    string  `json:"type"`
+			Role    string  `json:"role"`
 			Summary []rText `json:"summary"`
 			Content []rText `json:"content"`
 		}
-		if json.Unmarshal(raw, &it) != nil || it.Type != "reasoning" ||
+		if json.Unmarshal(raw, &it) != nil {
+			continue
+		}
+		kinds[i] = stepKindOf(it.Type, it.Role)
+		if it.Type != "reasoning" ||
 			slices.ContainsFunc(it.Content, func(c rText) bool { return c.Type == "reasoning_text" && c.Text != "" }) {
 			continue
 		}
@@ -716,7 +730,7 @@ func withReasoningText(body []byte) []byte {
 			b.WriteString(s.Text)
 		}
 		if b.Len() == 0 {
-			continue
+			b.WriteString(responsesNoReasoning)
 		}
 		var m map[string]json.RawMessage
 		if json.Unmarshal(raw, &m) != nil {
@@ -724,9 +738,12 @@ func withReasoningText(body []byte) []byte {
 		}
 		m["content"], _ = json.Marshal([]map[string]string{{"type": "reasoning_text", "text": b.String()}})
 		if nb, err := json.Marshal(m); err == nil {
-			items[i] = nb
-			changed = true
+			items[i], changed = nb, true
 		}
+	}
+	none, _ := json.Marshal(responsesNoReasoningItem())
+	if led, ok := reasonFirst(items, kinds, json.RawMessage(none)); ok {
+		items, changed = led, true
 	}
 	if !changed {
 		return body
@@ -737,6 +754,107 @@ func withReasoningText(body []byte) []byte {
 		return body
 	}
 	return nb
+}
+
+// stepKind is what a Responses input item is to a step of the model's: its
+// reasoning, something it said or a call it made, what answered a call, or
+// a message of the user's (or the system's) that starts a turn.
+type stepKind int
+
+const (
+	stepOther stepKind = iota
+	stepReasoning
+	stepSaid
+	stepCall
+	stepOutput
+	stepTurn
+)
+
+func stepKindOf(typ, role string) stepKind {
+	switch {
+	case typ == "reasoning":
+		return stepReasoning
+	case strings.HasSuffix(typ, "_output"):
+		return stepOutput
+	case strings.HasSuffix(typ, "_call"):
+		return stepCall
+	case (typ == "message" || typ == "") && role == "assistant":
+		return stepSaid
+	case typ == "message" || typ == "" && role != "":
+		return stepTurn
+	}
+	return stepOther
+}
+
+// responsesNoReasoningItem is the reasoning item a step leads with when it has none
+// of its own (reasonFirst).
+func responsesNoReasoningItem() map[string]any {
+	return map[string]any{"type": "reasoning", "summary": []any{},
+		"content": []map[string]any{{"type": "reasoning_text", "text": responsesNoReasoning}}}
+}
+
+// reasonFirst has each step of the model's (a run of its reasoning, what it
+// said and the calls it made, between a user message or a tool output and
+// the next) that makes a call, or that follows a tool output, lead with a
+// reasoning item: the step's first one moved ahead of the rest, else none.
+// DeepSeek's /v1/responses reads a step as one assistant message whose
+// thinking is the reasoning item it starts with, and turns the whole
+// request away ("The `reasoning_text` in the thinking mode must be passed
+// back to the API") when a step of the turn being continued starts with
+// anything else: a call (#1592), or what the model said, as Codex sends a
+// step that said something before its call with its reasoning between them,
+// or with none, which magpie put between them (#1822). Checked against
+// api.deepseek.com on 2026-10-12: [text, reasoning, call] and [output,
+// text] are refused, [reasoning, text, call] and [output, reasoning, text]
+// are taken. ok is false, and items comes back as it is, when every such
+// step leads with one already.
+func reasonFirst[T any](items []T, kinds []stepKind, none T) (led []T, ok bool) {
+	step := func(k stepKind) bool { return k == stepReasoning || k == stepSaid || k == stepCall }
+	afterOutput := false
+	for i := 0; i < len(items); {
+		if !step(kinds[i]) {
+			switch kinds[i] {
+			case stepOutput:
+				afterOutput = true
+			case stepTurn:
+				afterOutput = false
+			}
+			if ok {
+				led = append(led, items[i])
+			}
+			i++
+			continue
+		}
+		j, calls, first := i, false, -1
+		for ; j < len(items) && step(kinds[j]); j++ {
+			calls = calls || kinds[j] == stepCall
+			if kinds[j] == stepReasoning && first < 0 {
+				first = j
+			}
+		}
+		if (calls || afterOutput) && first != i {
+			if !ok {
+				led, ok = append(make([]T, 0, len(items)+1), items[:i]...), true
+			}
+			if first < 0 {
+				led = append(led, none)
+			} else {
+				led = append(led, items[first])
+			}
+			for x := i; x < j; x++ {
+				if x != first {
+					led = append(led, items[x])
+				}
+			}
+		} else if ok {
+			led = append(led, items[i:j]...)
+		}
+		i = j
+	}
+	if !ok {
+		return items, false
+	}
+	return led, true
 }
 
 // buildResponses renders a request for a Responses upstream.
@@ -810,6 +928,15 @@ func buildResponses(r *Request, model, host string, rejectTemp bool) []byte {
 			}
 		}
 		flushMsg()
+	}
+	if replay {
+		kinds := make([]stepKind, len(input))
+		for i, it := range input {
+			typ, _ := it["type"].(string)
+			role, _ := it["role"].(string)
+			kinds[i] = stepKindOf(typ, role)
+		}
+		input, _ = reasonFirst(input, kinds, responsesNoReasoningItem())
 	}
 	if input == nil {
 		input = []map[string]any{}
