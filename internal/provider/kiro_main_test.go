@@ -19,6 +19,8 @@ import (
 func TestMain(m *testing.M) {
 	os.Exit(testenv.RunIn(m, func(home string) {
 		testenv.Offline()
+		// These isolated fixtures are exclusively managed; external-owner tests override it.
+		os.Setenv("MAGPIE_CODEX_AUTH_OWNER", "magpie")
 		kiroCLIDB = func() string { return filepath.Join(home, "kiro-test", "kiro-cli", "data.sqlite3") }
 		kiroIDEDir = func() string { return filepath.Join(home, "kiro-test", "sso") }
 		askKiroIdentity = func(string, string) (string, string) { return "", "" }

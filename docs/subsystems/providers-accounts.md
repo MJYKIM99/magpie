@@ -235,6 +235,19 @@ and `TestHistoricalWindowHoldsUsesEachWindowsOwnReading`.
 - A usage cap is kept per account (`AccountCaps`, 1–99) and, beside it, per window (`AccountWindowCaps`, by the account and the window's `capId`, its name in lower case: `WindowCapID`). A window's own share wins over the account's; 100 is no cap on that window. `CapsOf` gives both (`WindowCaps`), `CapHeld` and `capReached` judge each window by its own, and `SetWindowCap` (GUI `provider/windowcap`, `magpie provider account-cap <id> <account> --window <name>`) sets one. A config without window caps reads as before.
 - A window whose reset time has passed has started again, whatever share it was read at (`resetPassed`). That holds for a reading kept from before (`AsOf`) and for a fresh one: Claude Code's `/usage` gives a reset to the minute and can lag it, so a run just after a reset can still say 100% with that reset. `claudeWindows` hands such a window back empty on every path, and `usedPast`, `usedUp`, `BackAt` and `capReached` leave it out when they judge an account spent, for Codex, Claude Code and `magpie quota wait` alike. A card can still show a kept reading as it was read (`reported`, for a Claude card while `/usage` is unavailable); that changes what it shows, never which account is used. A reset `/usage` gives as a time alone ("resets 3pm") can be read as its next one, a day on (`claudeResetTime`), and is then not seen as passed here.
 
+## Local Codex ownership
+
+This local branch treats Codex sign-ins as externally managed by default
+([`codex_ownership.go`](../../internal/provider/codex_ownership.go)). Valid
+credentials can be read from the file or the configured macOS keychain, but
+refresh, sign-in (including `StartSignInWith`), account import, switching and
+removal of the current sign-in return an ownership error. Keepalive skips external Codex
+accounts. Removing an inactive saved copy is still allowed. Explicit
+`MAGPIE_CODEX_AUTH_OWNER=magpie` is only for an isolated, exclusively managed
+sign-in. Its refresh writes owner-only credentials and refuses to publish a
+rotation when the original sign-in or its credential store changed. Tests use local fake services;
+real accounts and other platforms were not exercised by this update.
+
 ## Verification
 
 ```sh

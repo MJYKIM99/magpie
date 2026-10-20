@@ -18,6 +18,7 @@ import (
 // Codex is kept signed in to an account that isn't first. The note names
 // the account a request goes to first.
 func TestViaMagpieNamesTheAccountFirstInOrder(t *testing.T) {
+	t.Setenv("MAGPIE_CODEX_AUTH_OWNER", "magpie")
 	claims := func(m map[string]any) string {
 		b, _ := json.Marshal(m)
 		return "h." + base64.RawURLEncoding.EncodeToString(b) + ".s"

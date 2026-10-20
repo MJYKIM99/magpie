@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -82,6 +83,8 @@ func codexStandIn(path string) string {
 }
 
 func codex(home string) *Agent { return codexIn(here(home)) }
+
+var noticeCodexForeignGateway = newNotice("magpie took Codex's endpoint over from another local gateway at {url}; picking one of Codex's own models hands it back.")
 
 // The two notices magpie's multi-agent V1 setting (#141) can carry: Codex's
 // own features.multi_agent_v2 is on in the config magpie routes and takes the
@@ -217,14 +220,14 @@ func catalogParses(b []byte) bool {
 	return json.Unmarshal(b, &v) == nil
 }
 
-// writeOwnList writes the model list magpie keeps for Codex at path. A file
-// there that doesn't parse is copied aside first: Keep (#1450) holds
+// writeOwnList stages the model list at path. A file at its final keepPath
+// that doesn't parse is copied aside there first: Keep (#1450) holds
 // nothing of a file it can't read, so writing the new list over one would
 // end the keys the user added by hand with no copy (#2263's rule for
 // magpie's state files, which this file had missed). An error stops the
 // write.
-func writeOwnList(path string, b []byte) error {
-	if err := lastgood.KeepUnparsed(path, catalogParses); err != nil {
+func writeOwnList(path, keepPath string, b []byte) error {
+	if err := lastgood.KeepUnparsed(keepPath, catalogParses); err != nil {
 		return err
 	}
 	return edit.WriteAtomic(path, b)
@@ -232,8 +235,12 @@ func writeOwnList(path string, b []byte) error {
 
 func codexIn(at place) *Agent {
 	dir := at.codexHome()
-	path := filepath.Join(dir, "config.toml")
-	catalogPath := filepath.Join(dir, "magpie-models.json")
+	return codexConfig(at, filepath.Join(dir, "config.toml"), filepath.Join(dir, "magpie-models.json"), &recoveryState{path: stashPath()}, true)
+}
+
+func codexConfig(at place, path, catalogPath string, state *recoveryState, transactional bool) *Agent {
+	dir := at.codexHome()
+	stashLoad, stash, forget, unstash := state.load, state.set, state.forget, state.take
 	get := func(k string) string { v, _ := edit.GetTOMLTop(path, k); return v }
 	// this machine's Codex reaches the gateway at the address its config
 	// gives, when that is magpie's on another host: the Codex app on
@@ -247,7 +254,7 @@ func codexIn(at place) *Agent {
 	// the catalog as the config names it: relative to config.toml on
 	// Windows, where a C:\ path is no file to the same Codex reading it
 	// from WSL (#816); Codex reads a relative one from its home
-	catalogRef := at.native(catalogPath)
+	catalogRef := at.native(filepath.Join(dir, "magpie-models.json"))
 	if at.spell == nil && runtime.GOOS == "windows" {
 		catalogRef = filepath.Base(catalogPath)
 	}
@@ -286,7 +293,7 @@ func codexIn(at place) *Agent {
 			// one that doesn't parse is copied aside before it goes: Keep
 			// held nothing of it, so removing it outright would end the
 			// user's own keys with no copy
-			if err := lastgood.KeepUnparsed(catalogPath, catalogParses); err != nil {
+			if err := lastgood.KeepUnparsed(filepath.Join(dir, "magpie-models.json"), catalogParses); err != nil {
 				return
 			}
 			os.Remove(catalogPath)
@@ -355,7 +362,7 @@ func codexIn(at place) *Agent {
 		case asProvider() && ownCatalog(get("model_catalog_json")):
 			b := ownList()
 			if cur, _ := edit.Read(catalogPath); string(cur) != string(b) {
-				return writeOwnList(catalogPath, b)
+				return writeOwnList(catalogPath, filepath.Join(dir, "magpie-models.json"), b)
 			}
 		case viaBase():
 			return codexStaleCache(filepath.Join(dir, "models_cache.json"), provider.CodexListTag())
@@ -393,7 +400,7 @@ func codexIn(at place) *Agent {
 	// where Codex is routed through magpie, taken back where it isn't
 	asyncCompaction := func(routed bool) error {
 		s := settings.Load()
-		return codexAsyncSync(path, at.key("codex.async"), routed, s.CodexAsyncCompact, s.CodexAsyncCompactPercent)
+		return codexAsyncSync(path, at.key("codex.async"), routed, s.CodexAsyncCompact, s.CodexAsyncCompactPercent, state)
 	}
 	// keptBearerToken is the table's bearer token when it is one the
 	// gateway takes: a caller key of the gateway's own the user put in
@@ -943,10 +950,13 @@ func codexIn(at place) *Agent {
 		}
 		was := unstash(at.key("codex.model"))
 		var back []edit.KV
-		if p := unstash(at.key("codex.provider")); p != "" && p != magpieID {
+		if b := unstash(at.key("codex.base_url")); b != "" && !isCodexGatewayOn(b, at.host()) && get("openai_base_url") == "" {
+			back = append(back, edit.KV{Path: "openai_base_url", Value: b})
+		}
+		if p := unstash(at.key("codex.provider")); p != "" && p != magpieID && get("model_provider") == "" {
 			back = append(back, edit.KV{Path: "model_provider", Value: p})
 		}
-		if c := unstash(at.key("codex.catalog")); c != "" && !ownCatalog(c) {
+		if c := unstash(at.key("codex.catalog")); c != "" && !ownCatalog(c) && get("model_catalog_json") == "" {
 			back = append(back, edit.KV{Path: "model_catalog_json", Value: c})
 		}
 		if e := unstash(at.key("codex.effort")); e != "" {
@@ -961,25 +971,17 @@ func codexIn(at place) *Agent {
 	}
 	set := func(v string) error {
 		if v == "" {
-			if err := dropSubagent(); err != nil {
+			if _, err := unroute(); err != nil {
 				return err
 			}
-			if err := giveTables(); err != nil {
+			if err := dropSubagent(); err != nil {
 				return err
 			}
 			if err := dropMirrorFailover(); err != nil {
 				return err
 			}
-			// Codex as installed: OpenAI, its own catalog, its default model
-			if err := dropBase(); err != nil {
-				return err
-			}
-			if err := edit.DelTOMLTop(path, "model", "model_provider", "model_catalog_json"); err != nil {
-				return err
-			}
-			dropList()
-			forget(at.key("codex.model"), at.key("codex.effort"), at.key("codex.provider"), at.key("codex.catalog"), at.key("codex.out"), at.key("codex.joined"), at.key("codex.beside"))
-			return nil
+			forget(at.key("codex.model"), at.key("codex.effort"), at.key("codex.provider"), at.key("codex.catalog"), at.key("codex.base_url"))
+			return edit.DelTOMLTop(path, "model")
 		}
 		// magpie API: magpie stays Codex's provider whichever model is the
 		// default, so one of Codex's own goes as magpie serves it, on the
@@ -998,7 +1000,8 @@ func codexIn(at place) *Agent {
 			}
 			if !routed() {
 				stash(map[string]string{at.key("codex.model"): get("model"), at.key("codex.effort"): get("model_reasoning_effort"),
-					at.key("codex.provider"): get("model_provider"), at.key("codex.catalog"): get("model_catalog_json")})
+					at.key("codex.provider"): get("model_provider"), at.key("codex.catalog"): get("model_catalog_json"),
+					at.key("codex.base_url"): get("openai_base_url")})
 			}
 			// a ChatGPT account the Codex app holds (out of allowance and
 			// of credits) keeps it from sending at all, a magpie model's
@@ -1043,7 +1046,7 @@ func codexIn(at place) *Agent {
 			if err := putProvider(); err != nil {
 				return err
 			}
-			if err := writeOwnList(catalogPath, ownList()); err != nil {
+			if err := writeOwnList(catalogPath, filepath.Join(dir, "magpie-models.json"), ownList()); err != nil {
 				return err
 			}
 			// a thread started on Codex's built-in provider stays on it when
@@ -1087,7 +1090,7 @@ func codexIn(at place) *Agent {
 		return settle()
 	}
 
-	a := atomic(&Agent{
+	a := &Agent{
 		ID: "codex", Name: "Codex", Icon: "codex-color", Bin: "codex", Dir: dir, Path: path,
 		UA: []string{"codex", "acp-extension-codex"}, // The ACP adapter's default client name becomes Codex's originator.
 		// Codex as it was before magpie: its default puts it back as
@@ -1134,7 +1137,8 @@ func codexIn(at place) *Agent {
 			}
 			if !routed() {
 				stash(map[string]string{at.key("codex.model"): get("model"), at.key("codex.effort"): get("model_reasoning_effort"),
-					at.key("codex.provider"): get("model_provider"), at.key("codex.catalog"): get("model_catalog_json")})
+					at.key("codex.provider"): get("model_provider"), at.key("codex.catalog"): get("model_catalog_json"),
+					at.key("codex.base_url"): get("openai_base_url")})
 			}
 			forget(at.key("codex.out"))
 			if err := dropProvider(); err != nil {
@@ -1243,7 +1247,7 @@ func codexIn(at place) *Agent {
 				}
 				b := ownList()
 				if cur, _ := edit.Read(catalogPath); string(cur) != string(b) {
-					if err := writeOwnList(catalogPath, b); err != nil {
+					if err := writeOwnList(catalogPath, filepath.Join(dir, "magpie-models.json"), b); err != nil {
 						return err
 					}
 				}
@@ -1339,6 +1343,9 @@ func codexIn(at place) *Agent {
 			var out []string
 			if w := codexSubAgentsV1Warning(path, routed()); w != "" {
 				out = append(out, w)
+			}
+			if b := stashLoad()[at.key("codex.base_url")]; routed() && foreignGateway(b) {
+				out = append(out, noticeCodexForeignGateway.say("url", b))
 			}
 			if at.spell == nil {
 				if n, ok := codexDaemonNotice(path); ok {
@@ -1521,13 +1528,18 @@ func codexIn(at place) *Agent {
 				},
 			},
 		},
-	}, path, catalogPath)
+	}
 	// this machine's Codex: the address its config keeps is tried (Drift),
 	// and moved to WSL's new one when that changed (#1013)
 	if at.spell == nil {
 		a.reach = at.base
 		a.viaProxy = func() (bool, bool, string, string) { return codexThroughProxy(path, at.gw()) }
 		a.move = func(from, to string) error { return codexMoveGateway(path, from, to) }
+	}
+	if transactional {
+		return coexistence(a, []string{path, catalogPath, state.path}, state, func(paths []string, state *recoveryState) *Agent {
+			return codexConfig(at, paths[0], paths[1], state, false)
+		})
 	}
 	return a
 }
@@ -1970,3 +1982,24 @@ func codexReachedRead(path string, since time.Time) (at time.Time, to string, re
 	}
 	return
 }
+
+func foreignGateway(u string) bool {
+	if u == "" || isCodexGateway(u) {
+		return false
+	}
+	p, err := url.Parse(u)
+	if err != nil {
+		return false
+	}
+	switch p.Hostname() {
+	case "127.0.0.1", "localhost", "::1":
+	default:
+		return false
+	}
+	// magpie's own gateway is not another program's, whichever port it was
+	// moved to and however the URL spells its host
+	_, ours, err := net.SplitHostPort(gateway.Addr())
+	return err != nil || p.Port() != ours
+}
+
+func isCodexGateway(u string) bool { return isCodexGatewayOn(u, here("").host()) }

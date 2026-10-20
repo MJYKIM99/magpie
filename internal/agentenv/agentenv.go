@@ -30,6 +30,8 @@ package agentenv
 var Vars = []string{
 	// Claude Code, Codex and Copilot CLI
 	"CLAUDE_CONFIG_DIR", "CODEX_HOME", "COPILOT_HOME",
+	// Codex credential ownership, a mode rather than a folder
+	"MAGPIE_CODEX_AUTH_OWNER",
 	// Claude Code's temp folder, the images its sessions were given
 	"CLAUDE_CODE_TMPDIR",
 	// Zed, or a fork of it that keeps its settings (ZedG)
@@ -114,7 +116,8 @@ var Vars = []string{
 // OPENCODE_DB in OpenCode's data folder), which a relative value is meant
 // for.
 var NotPaths = map[string]bool{
-	"PI_PROFILE": true, "OMP_PROFILE": true,
+	"MAGPIE_CODEX_AUTH_OWNER": true,
+	"PI_PROFILE":              true, "OMP_PROFILE": true,
 	"WINDSURF_API_SERVER_URL": true, "ZCODE_CREDENTIAL_SECRET": true,
 	"PI_CONFIG_DIR": true, "OPENCODE_DB": true,
 	"STEPCODE_CONFIG_DIR": true,

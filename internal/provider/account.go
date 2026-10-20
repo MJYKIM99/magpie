@@ -17,7 +17,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
 	"maps"
 	"net/http"
 	"net/url"
@@ -1036,25 +1035,21 @@ func codexToken(ctx context.Context, dir string) (tok, accountID string, err err
 		return "", "", errors.New("Codex is signed out; run codex login")
 	}
 	accountID = codexAccountID(a)
+	spent := codexRefreshToken(raw)
 	tok, err = codexRefresh(ctx, raw)
 	if err != nil {
 		return "", "", err
 	}
-	// keep every other field as Codex wrote it. auth.json is the user's
-	// own sign-in, which Codex CLI and the Codex app read: written beside
-	// it, flushed and renamed in, never truncated in place, so a machine
-	// going down mid-write leaves the old one whole and a file held for a
-	// moment on Windows is waited out (#2239, #1505). A write that still
-	// fails loses the rotation, said in the log; the fresh access token in
-	// hand still serves this request.
-	if out, err := json.MarshalIndent(raw, "", "  "); err == nil {
-		if werr := st.write(out); werr != nil {
-			where := st.file()
-			if st.keychain {
-				where = "the keychain item " + codexKeychainService
-			}
-			log.Printf("codex: the refreshed sign-in didn't reach %s: %v", where, werr)
-		}
+	// Explicit ownership still refuses to overwrite an intervening sign-in.
+	if !codexHolds(st, spent) {
+		return "", "", errors.New("Codex sign-in changed during refresh; retry with the current sign-in")
+	}
+	out, err := json.MarshalIndent(raw, "", "  ")
+	if err != nil {
+		return "", "", err
+	}
+	if err := st.write(out); err != nil {
+		return "", "", fmt.Errorf("save refreshed Codex sign-in: %w", err)
 	}
 	return tok, accountID, nil
 }
@@ -1067,9 +1062,35 @@ func codexAccountID(a codexAuth) string {
 	return claimString(jwtClaims(a.Tokens.IDToken), "https://api.openai.com/auth", "chatgpt_account_id")
 }
 
+// codexRefreshToken is the refresh token of an auth.json-shaped sign-in, ""
+// when it has none.
+func codexRefreshToken(raw map[string]any) string {
+	toks, _ := raw["tokens"].(map[string]any)
+	s, _ := toks["refresh_token"].(string)
+	return s
+}
+
+// codexHolds reports whether the same store still carries the refresh
+// token spent, so that a write-back may replace it: one that has moved on
+// belongs to whoever moved it.
+func codexHolds(store codexStore, spent string) bool {
+	if spent == "" {
+		return false
+	}
+	b, current, err := readCodexLogin(store.home, true)
+	var now map[string]any
+	if err != nil || current.keychain != store.keychain || json.Unmarshal(b, &now) != nil {
+		return false
+	}
+	return codexRefreshToken(now) == spent
+}
+
 // codexRefresh renews the tokens of an auth.json-shaped sign-in in place,
 // every other field left as it was, and returns the new access token.
 func codexRefresh(ctx context.Context, raw map[string]any) (string, error) {
+	if !codexAuthManaged() {
+		return "", errCodexAuthExternal
+	}
 	toks, _ := raw["tokens"].(map[string]any)
 	if toks == nil {
 		toks = map[string]any{}

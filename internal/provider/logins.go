@@ -1028,6 +1028,9 @@ func SwitchLogin(agent, user string) error {
 	if settings.AccountDiscoveryOff() {
 		return errAccountDiscoveryOff
 	}
+	if agent == "codex" && !codexAuthManaged() {
+		return errCodexAuthExternal
+	}
 	// the user's own choice: magpie doesn't sign the agent back in to the
 	// account it moved it off
 	if slices.Contains(loginAgents, agent) {
@@ -1215,6 +1218,14 @@ func ForgetLogin(agent, user string) error {
 	if settings.AccountDiscoveryOff() {
 		return errAccountDiscoveryOff
 	}
+	if agent == "codex" && !codexAuthManaged() {
+		loginsMu.Lock()
+		live, ok := liveLogin(agent)
+		loginsMu.Unlock()
+		if ok && strings.EqualFold(live.User, user) {
+			return errCodexAuthExternal
+		}
+	}
 	if pp, ok := pluginOfAgent(agent); ok {
 		return forgetPluginLogin(pp, user)
 	}
@@ -1274,6 +1285,9 @@ func forgetLogin(agent, user string) (signedOut bool, err error) {
 	defer loginsMu.Unlock()
 	ls := readLogins()
 	if live, ok := liveLogin(agent); ok && strings.EqualFold(live.User, user) {
+		if agent == "codex" && !codexAuthManaged() {
+			return false, errCodexAuthExternal
+		}
 		other := slices.ContainsFunc(ls, func(l savedLogin) bool { return l.Agent == agent && !strings.EqualFold(l.User, user) })
 		if agent != "codex" || other {
 			return false, &SignedInError{Agent: agent, User: user}

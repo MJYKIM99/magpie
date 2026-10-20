@@ -63,11 +63,11 @@ func TestCodexRefreshFlushesAuthJSONBeforeReplacingIt(t *testing.T) {
 	fakeCodexRefresh(t)
 	defer func() { steady.Sync = (*os.File).Sync }()
 
-	// a flush that fails leaves auth.json whole, and the request served
+	// A failed flush leaves auth.json whole and reports the unsaved rotation.
 	path, was := dueCodexAuth(t)
 	steady.Sync = func(*os.File) error { return errors.New("the disk went away") }
-	if tok, _, err := codexToken(context.Background(), filepath.Dir(path)); err != nil || tok == "" {
-		t.Fatalf("codexToken: %q, %v", tok, err)
+	if tok, _, err := codexToken(context.Background(), filepath.Dir(path)); err == nil || tok != "" || !strings.Contains(err.Error(), "save refreshed Codex sign-in") {
+		t.Fatalf("an unsaved rotation was served or its error hidden: %q, %v", tok, err)
 	}
 	if b, err := os.ReadFile(path); err != nil || string(b) != string(was) {
 		t.Fatalf("a flush that failed left auth.json %q (%v), want the sign-in as it was", b, err)

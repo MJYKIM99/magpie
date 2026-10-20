@@ -595,7 +595,11 @@ func claude(home string) *Agent { return claudeIn(here(home)) }
 // a WSL distro's (see wsl.go), its settings.json naming the gateway as it
 // reaches it from there.
 func claudeIn(at place) *Agent {
-	path := filepath.Join(at.claudeDir(), "settings.json")
+	return claudeConfig(at, filepath.Join(at.claudeDir(), "settings.json"), &recoveryState{path: stashPath()}, true)
+}
+
+func claudeConfig(at place, path string, state *recoveryState, transactional bool) *Agent {
+	stashLoad, stash, forget, unstash := state.load, state.set, state.forget, state.take
 	// a model in the env is read as magpie serves it, its dashed spelling
 	// taken back (claudeModelEnv)
 	rawEnv := func(k string) string { v, _ := edit.GetJSON(path, "env."+k); return v }
@@ -1257,7 +1261,6 @@ func claudeIn(at place) *Agent {
 	}
 	// what was last written that an open Claude Code session doesn't see:
 	// it reads settings.json at start-up, only its env as it goes
-	stale := ""
 	// the model a subagent runs on when neither its definition nor the
 	// call names one, if the user gave it one of its own: Claude Code
 	// takes the Agent call's model, then the agent's frontmatter, then
@@ -1361,9 +1364,16 @@ func claudeIn(at place) *Agent {
 		if !routed() {
 			return "", nil
 		}
-		keys := make([]string, len(claudeEnv))
-		for i, k := range claudeEnv {
-			keys[i] = "env." + k
+		var keys []string
+		for _, k := range claudeEnv {
+			current := env(k)
+			if k == "ANTHROPIC_AUTH_TOKEN" && !keyOurs() {
+				continue
+			}
+			if k != "ANTHROPIC_BASE_URL" && k != "ANTHROPIC_AUTH_TOKEN" && current != "" && !isMagpie(current) {
+				continue
+			}
+			keys = append(keys, "env."+k)
 		}
 		if err := edit.DelJSON(path, keys...); err != nil {
 			return "", err
@@ -1387,7 +1397,7 @@ func claudeIn(at place) *Agent {
 		if u := unstash(at.key("claude.base_url")); u != "" {
 			back = append(back, edit.KV{Path: "env.ANTHROPIC_BASE_URL", Value: u})
 		}
-		if t := unstash(at.key("claude.auth_token")); t != "" {
+		if t := unstash(at.key("claude.auth_token")); t != "" && env("ANTHROPIC_AUTH_TOKEN") == "" {
 			back = append(back, edit.KV{Path: "env.ANTHROPIC_AUTH_TOKEN", Value: t})
 		}
 		if len(back) > 0 {
@@ -1412,7 +1422,7 @@ func claudeIn(at place) *Agent {
 			// magpie's, left at a gateway address since changed: its key,
 			// or, where Claude Code kept its claude.ai sign-in, an empty
 			// one beside magpie's model
-			if keyOurs() {
+			if keyOurs() && (env("ANTHROPIC_BASE_URL") == "" || env("ANTHROPIC_BASE_URL") == stashLoad()[wroteAt]) {
 				for _, k := range claudeEnv {
 					keys = append(keys, "env."+k)
 				}
@@ -1691,12 +1701,12 @@ func claudeIn(at place) *Agent {
 				return err
 			}
 			if v == "max" {
-				stale = ""
+				state.notice = ""
 				return edit.SetJSON(path, edit.KV{Path: "env." + claudeEffortEnv, Value: v})
 			}
 			// what an open session reads is its env: the level written below
 			// waits for the next one
-			stale = "effort"
+			state.notice = "effort"
 			if env(claudeEffortEnv) != "" {
 				if err := edit.DelJSON(path, "env."+claudeEffortEnv); err != nil {
 					return err
@@ -1749,13 +1759,13 @@ func claudeIn(at place) *Agent {
 		Set: func(v string) error {
 			switch v {
 			case "", "off":
-				stale = "ultracode"
+				state.notice = "ultracode"
 				return edit.DelJSON(path, "ultracode")
 			case "on":
 				if m := get(); !contains(claudeEffortsFor(m), "xhigh") {
 					return fmt.Errorf("Claude Code has ultracode only on a model that takes xhigh effort, and %s doesn't", orDefault(m))
 				}
-				stale = "ultracode"
+				state.notice = "ultracode"
 				return edit.SetJSON(path, edit.KV{Path: "ultracode", Value: true})
 			}
 			return fmt.Errorf("ultracode is on or off, not %q", v)
@@ -2154,14 +2164,19 @@ func claudeIn(at place) *Agent {
 		// level taken away, only when started again. Windows can't be asked
 		// what runs.
 		Notice: func() string {
-			if stale == "" || !claudeRunning() {
+			if state.notice == "" || !claudeRunning() {
 				return ""
 			}
-			if stale == "ultracode" {
+			if state.notice == "ultracode" {
 				return noticeClaudeUltracode.String()
 			}
 			return noticeClaudeEffort.String()
 		},
+	}
+	if transactional {
+		return coexistence(self, []string{path, state.path}, state, func(paths []string, state *recoveryState) *Agent {
+			return claudeConfig(at, paths[0], state, false)
+		})
 	}
 	return self
 }

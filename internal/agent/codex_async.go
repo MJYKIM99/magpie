@@ -58,7 +58,8 @@ func codexAsyncNow(path string) (feature any, provider map[string]any, err error
 // threshold (0 leaves Codex's own). key is the stash's. The capability is
 // written for a feature the user turned on in the config themselves too:
 // on magpie's provider it would never run without it (#2493).
-func codexAsyncSync(path, key string, routed, on bool, percent int) error {
+func codexAsyncSync(path, key string, routed, on bool, percent int, state *recoveryState) error {
+	stashLoad, stash, forget := state.load, state.set, state.forget
 	feature, provider, err := codexAsyncNow(path)
 	var bad *toml.DecodeError
 	if errors.As(err, &bad) {

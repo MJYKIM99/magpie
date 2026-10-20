@@ -351,6 +351,13 @@ func setTOMLTop(path string, preserve bool, kvs ...KV) error {
 	if n := len(doc.root.keys); n > 0 {
 		at = doc.root.keys[n-1].to
 	}
+	// New root keys must stay outside another tool's managed block.
+	for i, line := range lines[:at] {
+		if strings.HasPrefix(strings.TrimSpace(line), "# BEGIN ") && strings.Contains(line, "managed") {
+			at = i
+			break
+		}
+	}
 	for _, kv := range kvs {
 		line := kv.Path + " = " + tomlLiteral(kv.Value)
 		found := false

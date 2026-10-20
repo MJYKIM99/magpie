@@ -1047,6 +1047,7 @@ const I18N = {
     "A GPT lead spawns subagents on magpie’s other models. New threads only; Codex’s own multi_agent_v2 still wins": "GPT 主代理可在 magpie 的其他模型上开子代理。仅对新会话生效；Codex 自身的 multi_agent_v2 优先",
     "Codex's own multi_agent_v2 is on in the config magpie routes, which takes over the multi-agent V1 magpie's models ask for; turn it off in Codex's config to run subagents on magpie's models.": "Codex 自身的 multi_agent_v2 在 magpie 接管的配置里开着，会盖过 magpie 模型所需的 multi-agent V1；请在 Codex 的配置里把它关掉，才能让子代理跑在 magpie 的模型上。",
     "Codex's multi-agent V1 is on, but magpie couldn't read Codex's config to check its own multi_agent_v2.": "Codex 的 multi-agent V1 已开启，但 magpie 读不到 Codex 的配置，无法确认它自己的 multi_agent_v2。",
+    "magpie took Codex's endpoint over from another local gateway at {url}; picking one of Codex's own models hands it back.": "magpie 接管了 Codex 原先由另一个本地网关提供的入口 {url}；选择 Codex 自己的模型即可恢复原入口。",
     "$ USD": "$ 美元",
     "¥ CNY": "¥ 人民币",
     "What a cost — the Usage page's, the tray panel's, the TUI's and the CLI's — is shown as; a vendor's own balance, already in its own currency, is never converted": "用量页、托盘面板、TUI 和命令行的费用按此币种显示；厂商余额保持其原币种，不换算",
@@ -4799,6 +4800,7 @@ const I18N = {
     "A GPT lead spawns subagents on magpie’s other models. New threads only; Codex’s own multi_agent_v2 still wins": "GPT 主代理可在 magpie 的其他模型上開子代理。僅對新會話生效；Codex 自身的 multi_agent_v2 優先",
     "Codex's own multi_agent_v2 is on in the config magpie routes, which takes over the multi-agent V1 magpie's models ask for; turn it off in Codex's config to run subagents on magpie's models.": "Codex 自身的 multi_agent_v2 在 magpie 接管的設定裡開著，會蓋過 magpie 模型所需的 multi-agent V1；請在 Codex 的設定裡把它關掉，才能讓子代理跑在 magpie 的模型上。",
     "Codex's multi-agent V1 is on, but magpie couldn't read Codex's config to check its own multi_agent_v2.": "Codex 的 multi-agent V1 已開啟，但 magpie 讀不到 Codex 的設定，無法確認它自己的 multi_agent_v2。",
+    "magpie took Codex's endpoint over from another local gateway at {url}; picking one of Codex's own models hands it back.": "magpie 接管了 Codex 原先由另一個本機閘道提供的入口 {url}；選擇 Codex 自己的模型即可還原原入口。",
     "$ USD": "$ 美元",
     "¥ CNY": "¥ 人民幣",
     "What a cost — the Usage page's, the tray panel's, the TUI's and the CLI's — is shown as; a vendor's own balance, already in its own currency, is never converted": "用量頁、托盤面板、TUI 和命令列的費用按此幣種顯示；廠商餘額保持其原幣種，不換算",
@@ -8521,6 +8523,7 @@ const I18N = {
     "A GPT lead spawns subagents on magpie’s other models. New threads only; Codex’s own multi_agent_v2 still wins": "GPT のリードが magpie の他のモデルでサブエージェントを起動します。新しいスレッドのみ。Codex 自身の multi_agent_v2 が優先されます",
     "Codex's own multi_agent_v2 is on in the config magpie routes, which takes over the multi-agent V1 magpie's models ask for; turn it off in Codex's config to run subagents on magpie's models.": "magpie が中継する設定で Codex 自身の multi_agent_v2 がオンになっており、magpie のモデルが必要とする multi-agent V1 を上書きします。magpie のモデルでサブエージェントを動かすには、Codex の設定でオフにしてください。",
     "Codex's multi-agent V1 is on, but magpie couldn't read Codex's config to check its own multi_agent_v2.": "Codex の multi-agent V1 はオンですが、magpie は Codex の設定を読めなかったため、それ自身の multi_agent_v2 を確認できません。",
+    "magpie took Codex's endpoint over from another local gateway at {url}; picking one of Codex's own models hands it back.": "magpie が別のローカルゲートウェイ {url} から Codex の接続先を引き継ぎました。Codex 自身のモデルを選ぶと元の接続先に戻ります。",
     "$ USD": "$ 米ドル",
     "¥ CNY": "¥ 人民元",
     "What a cost — the Usage page's, the tray panel's, the TUI's and the CLI's — is shown as; a vendor's own balance, already in its own currency, is never converted": "費用（使用量ページ、トレイパネル、TUI、CLI のもの）をどの通貨で表示するか。ベンダー自身の残高はすでにその通貨建てなので、換算されません",
@@ -12273,6 +12276,7 @@ const I18N = {
     "A GPT lead spawns subagents on magpie’s other models. New threads only; Codex’s own multi_agent_v2 still wins": "Ein leitendes GPT startet Subagenten auf anderen magpie-Modellen. Nur neue Threads; Codex’ eigenes multi_agent_v2 hat Vorrang",
     "Codex's own multi_agent_v2 is on in the config magpie routes, which takes over the multi-agent V1 magpie's models ask for; turn it off in Codex's config to run subagents on magpie's models.": "Codex' eigenes multi_agent_v2 ist in der von magpie gerouteten Konfiguration an und überstimmt so das multi-agent V1, das magpie-Modelle brauchen; schalte es in Codex' Konfiguration aus, damit Subagenten auf magpie-Modellen laufen.",
     "Codex's multi-agent V1 is on, but magpie couldn't read Codex's config to check its own multi_agent_v2.": "Codex' multi-agent V1 ist an, aber magpie konnte Codex' Konfiguration nicht lesen, um dessen eigenes multi_agent_v2 zu prüfen.",
+    "magpie took Codex's endpoint over from another local gateway at {url}; picking one of Codex's own models hands it back.": "magpie hat den Codex-Endpunkt vom anderen lokalen Gateway unter {url} übernommen. Die Auswahl eines Codex-eigenen Modells stellt ihn wieder her.",
     "$ USD": "$ USD",
     "¥ CNY": "¥ CNY",
     "What a cost — the Usage page's, the tray panel's, the TUI's and the CLI's — is shown as; a vendor's own balance, already in its own currency, is never converted": "Wie Kosten angezeigt werden — auf der Seite „Nutzung“, im Tray-Panel, in der TUI und in der CLI; das eigene Guthaben eines Anbieters, bereits in seiner Währung, wird nie umgerechnet",
@@ -14988,6 +14992,7 @@ const I18N = {
 // internal/agent/notice.go), as tNotice matches them; each has its
 // translation above. TestEveryNoticeIsTranslated keeps the two the same.
 const NOTICES = [
+  "magpie took Codex's endpoint over from another local gateway at {url}; picking one of Codex's own models hands it back.",
   "Air runs magpie's models through OpenCode's ACP server, and OpenCode isn't installed here: install OpenCode (npm i -g opencode-ai), then pick Magpie in a new Air task.",
   "Ante reads its catalog at start-up — restart open ante sessions to use this.",
   "AstrBot reads cmd_config.json at start-up and writes it back whole when its WebUI saves settings — restart AstrBot to use this, before saving anything in its WebUI.",

@@ -36,6 +36,19 @@ something else shows up as drift.
 4. **Drift.** As the Agents page is drawn, `Drift` compares the config with `applied.json`. It runs `Check` first, then each field. An agent pointed at magpie through a reverse proxy is still on magpie (#1985, davisjiahao: a company's nginx at `https://ai.corp.example/magpie`). `wiringOff`, where most agents' `Check` compares a URL, and the checks of their own (Claude Code's managed settings, Reasonix's provider) take a URL that isn't magpie's when it ends with magpie's path, the rest is an http or https address on another machine (`onAnotherMachine`) or one on this machine's loopback with a path of its own (`loopbackWithPath`: the reporter's compliance proxy at `http://127.0.0.1:8788/claude-code-anthropic/<route>`; `proxyBase`), and `GET <rest>/` there answers as the gateway's own `GET /` does (`{"name":"magpie"}`, `magpieAt` in [`reach.go`](../../internal/agent/reach.go), tried in the background like `reachProbe`). Something else there (a relay CC Switch put in) is `unwired`, as is an address on this machine's loopback without a path, which is magpie's on an older port and is never tried. Until the answer is known it isn't drift, so Reconnect isn't offered and doesn't write the proxy away; port moves (`OnGateway`, `Rewire`) re-set only `unwired` agents, so they leave it too. Codex keeps such an address by magpie's key, as for #816 (`codexKeptGateway`: http or https, any port, a path before magpie's, loopback with a path). A model picked in Claude Code keeps it too once magpie has answered there (`surelyMagpie`; `routed` and `gwAt` in `claude.go`), so a proxy every request must go through isn't bypassed; before that, or at a relay, a pick points Claude Code at this magpie. Tests stub `magpieAt` in `TestMain` as known and not magpie. When the config is right and points at an address off loopback (a WSL twin under NAT, or this machine's Codex at an address the user kept, #816), it tries that address ([`reach.go`](../../internal/agent/reach.go)): in the background, at most every 20 s, never waited for. When nothing answers there while the gateway answers on loopback, the drift is `unreachable` (#1013), with what has to listen there: Share on local network, the user's portproxy, Windows' firewall. Then it checks whether the agent's latest use (`LastUsed`, `Reached`) reached the gateway: a request Codex's log says went to the host its config keeps magpie at, or one the gateway saw from it after (`lastSeen`), reached it.
 5. **Disconnect.** `Disconnect` puts back what the stash kept and forgets the record. It also marks the agent disconnected (`<id>.disconnected` in the stash, `Disconnected`) until the user connects it again (`connect`, or an `Apply` that leaves it wired): nothing magpie does by itself puts magpie back in meanwhile, neither a start's `Sync` nor Codex's account failover nor #701's magpie API wiring (paynezhuang on Discord: Codex had `openai_base_url` back after every update).
 
+## Local coexistence branch
+
+The local `codex/magpie-router-coexistence` branch keeps the upstream adapters,
+but stages Codex/Claude configuration and recovery state together
+([`coexistence.go`](../../internal/agent/coexistence.go),
+[`transaction.go`](../../internal/edit/transaction.go)). Failed edits retain
+both files for retry. Codex's model default restores an external endpoint,
+provider and catalog, while removing the selected model. Repeated defaults
+and later edits by another owner preserve that owner's settings. The upstream
+magpie provider table remains available to historical threads. See
+[`LOCAL_CUSTOMIZATION.md`](../../LOCAL_CUSTOMIZATION.md) for ownership and
+verification limits.
+
 ## Constraints and failure behavior
 
 - magpie only removes what it wrote. Anything else in an agent's config stays as it was.

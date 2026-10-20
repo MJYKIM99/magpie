@@ -227,6 +227,9 @@ func randomToken(n int) string {
 // An agent signed in with a CLI that isn't installed has it installed first:
 // the sign-in is then "installing", and gets its URL when that is done.
 func StartSignIn(agent string) (SignInState, error) {
+	if agent == "codex" && !codexAuthManaged() {
+		return SignInState{}, errCodexAuthExternal
+	}
 	// "zcode:bigmodel" is ZCode signed in on BigModel (智谱)
 	agent, site, _ := strings.Cut(agent, ":")
 	return StartSignInAt(agent, site)
@@ -244,6 +247,9 @@ func StartSignInWith(agent string, o SignInOptions) (SignInState, error) {
 	site := o.Site
 	if settings.AccountDiscoveryOff() {
 		return SignInState{}, errAccountDiscoveryOff
+	}
+	if agent == "codex" && !codexAuthManaged() {
+		return SignInState{}, errCodexAuthExternal
 	}
 	// one moved onto its plugin signs in there: an account signed in to
 	// here would be the built-in's, which nothing serves now
@@ -869,6 +875,9 @@ func codexLogin(idToken, accessToken, refreshToken, accountID string) (savedLogi
 // reading goes (StaleAllowance): it was read under the old sign-in, and
 // for a minute it would answer for the new one, a refusal and all.
 func addLogin(l savedLogin) (using bool, err error) {
+	if l.Agent == "codex" && !codexAuthManaged() {
+		return false, errCodexAuthExternal
+	}
 	defer func() { // under the name it is kept by (codexName), once loginsMu is let go
 		if err == nil {
 			StaleAllowance(l.Agent, l.User)

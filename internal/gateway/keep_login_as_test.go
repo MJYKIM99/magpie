@@ -16,6 +16,7 @@ import (
 // user uses Codex as): the gateway still tries the first first, In order,
 // and the one Codex is signed in to at its own place behind it.
 func TestKeptLoginStandsAtItsPlace(t *testing.T) {
+	t.Setenv("MAGPIE_CODEX_AUTH_OWNER", "magpie")
 	codexSignedIn(t, "spare@example.com")
 	// a usage read the gateway starts behind a reply reaches the same server
 	// on a goroutine of its own, so only the replies are counted, under mu

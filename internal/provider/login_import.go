@@ -258,6 +258,9 @@ func ImportLogins(ctx context.Context, agent string, files []string) ([]Imported
 	if settings.AccountDiscoveryOff() {
 		return nil, errAccountDiscoveryOff
 	}
+	if agent == "codex" && !codexAuthManaged() {
+		return nil, errCodexAuthExternal
+	}
 	if agent != "codex" && agent != "claude" {
 		return nil, fmt.Errorf("accounts can't be imported for %s", agent)
 	}
