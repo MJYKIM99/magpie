@@ -42,7 +42,10 @@ The local `codex/magpie-router-coexistence` branch keeps the upstream adapters,
 but stages Codex/Claude configuration and recovery state together
 ([`coexistence.go`](../../internal/agent/coexistence.go),
 [`transaction.go`](../../internal/edit/transaction.go)). Failed edits retain
-both files for retry. Codex's model default restores an external endpoint,
+both files for retry. Codex's asynchronous-compaction recovery uses the same
+staged state ([`codex_async.go`](../../internal/agent/codex_async.go)). A damaged
+catalog is copied aside beside its final path before replacement; that recovery
+copy remains even if the later configuration edit fails. Codex's model default restores an external endpoint,
 provider and catalog, while removing the selected model. Repeated defaults
 and later edits by another owner preserve that owner's settings. The upstream
 magpie provider table remains available to historical threads. See
