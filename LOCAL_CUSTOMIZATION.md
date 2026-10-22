@@ -87,7 +87,7 @@ Router 使用本机 `http://127.0.0.1:3425/v1` 的 Responses 接口，以及 Mag
 
 验证使用隔离 HOME，只复制用户明确选择的 OpenCode Go 供应商；Codex、Claude 和其他订阅凭据没有进入测试环境。真实完整链路验证了文本、工具调用、无推理记录的工具结果和压缩；一次流式检查未通过，聚焦复查收到了正确文本和 `response.completed`。实际命名空间工具调用及带真实推理的第二轮工具往返通过。另有假服务验证调用密钥范围及调用方 ChatGPT 凭据不进入供应商请求。图片、多代理协作、Claude 接入以及其他操作系统实机均未验证；GUI 资源没有修改。
 
-配置及旧安装包备份位于 `~/.codex/codex-router/magpie-integration-backups/20261013-1791914604409`。回滚配置时必须保留接入后用户的其他改动，按路由标识移除本次覆盖层记录并通过 Router 重新发布；不要直接用旧文件覆盖正在使用的配置。旧包用于回滚本次二进制兼容补丁。验证日志、发布结果和临时进程清理记录保存在 `.git/magpie-router-20261013-evidence/`。
+当时的配置及旧安装包备份位于 `~/.codex/codex-router/magpie-integration-backups/20261013-1791914604409`。其中旧应用包已于 10 月 20 日按用户要求删除，配置备份仍保留。回滚配置时必须保留接入后用户的其他改动，按路由标识移除本次覆盖层记录并通过 Router 重新发布；不要直接用旧文件覆盖正在使用的配置。验证日志、发布结果和临时进程清理记录保存在 `.git/magpie-router-20261013-evidence/`。
 
 安装和发布后检查：全仓库隔离回归 7,891 项通过、19 项条件跳过、零失败；三平台 vet 和构建通过，格式及 diff 检查通过。Router 的真实模型列表接口返回 200 并列出新增模型，调用凭据就绪。原目录的 13 个模型全部保留；新目录共 67 项，包含此前配置的外部路线及本次路线，没有把原有可见模型隐藏。
 
@@ -123,8 +123,8 @@ Chromium/WebKit 的通知翻译测试覆盖 en、zh、zh-TW、ja、de 和宽窄�
 
 最终 macOS 二进制经过隔离的真实 Router/转发器/LiteLLM/Magpie 调用链，供应商由本地假服务提供：流式回复、命名空间工具调用、工具结果往返、长会话压缩、调用密钥限制和调用方 ChatGPT 凭据不进入供应商请求，共六项检查通过。测试环境用 `MAGPIE_NO_ACCOUNTS=1` 禁止读取真实订阅账号。临时服务已结束，Linux/Windows 临时二进制已删除。真实 OpenCode Go 请求、图片、多代理、原生应用窗口和 Linux/Windows 实机行为未在这次更新中重新验证。
 
-旧安装完整保存在 `.git/magpie-upstream-20261020-evidence/Magpie-Coexistence-before-update.app`（约 42 MB，原二进制哈希 `7abf572b6944a4fa4dc82fab30e23fcb93a33a36bb2953d6533cbe7b66709998`）。回滚只需在应用退出后，用该包替换 `/Applications/Magpie-Coexistence.app`，并核对旧哈希；按需把源码恢复到已保留的日期备份分支。供应商数据、本机调用密钥和 Router 覆盖层没有随二进制回滚的必要，不应整份覆盖为旧配置。
+安装时曾将旧包备份到 `.git/magpie-upstream-20261020-evidence/Magpie-Coexistence-before-update.app`（约 42 MB，原二进制哈希 `7abf572b6944a4fa4dc82fab30e23fcb93a33a36bb2953d6533cbe7b66709998`）。用户随后要求删除旧版本；该备份包、`dist/Magpie-Coexistence.app` 和 10 月 13 日的 `Magpie-Coexistence-before-deepseek.app` 均已核对哈希、确认未运行后删除。旧二进制不再可直接用于回滚，日期备份分支及来源清单仍保留，需要时须从对应源码重新构建。供应商数据、本机调用密钥和 Router 覆盖层不应整份覆盖为旧配置。
 
-Codex 配置/登录和已存在的 Claude 配置/登录文件的大小、mtime、inode 均与本次开始时一致；Router 的健康接口仍正常。本次没有启动更新后的真实应用，也没有执行真实账号的插件迁移，保持原先的未运行状态。打开 Magpie 后使用新版本；Grok/Kiro 等退役订阅按上游设计由插件提供。
+安装完成时，Codex 配置/登录和已存在的 Claude 配置/登录文件的大小、mtime、inode 均与更新开始时一致，Router 的健康接口正常，真实应用尚未启动。随后按用户要求启动 `/Applications/Magpie-Coexistence.app`，并将原生窗口显示到前台；网关 `http://127.0.0.1:3425/` 返回 200，报告版本 `coexistence-dev-0fe039f1-c49d6dbb`，监听进程来自该安装路径。原生界面已显示 Agent 页面。没有操作 Agent 接入开关；Grok/Kiro 等退役订阅按上游设计由插件提供。
 
-保留约 50 MB 的候选应用供复现，约 42 MB 的旧包供回滚。共享 Go 缓存当前约 4.9 GB，保留供后续构建复用；固定版本 UI 测试依赖约 27 MB 和新增 WebKit 测试运行时约 291 MB 保留供复验，并保留了原浏览器缓存的运行时引用。结束时磁盘剩余约 20 GiB。本次低磁盘的有界构建例外已由用户明确批准；未创建模拟器。
+保留约 50 MB 的新版构建产物 `dist/Magpie-Coexistence-20261020.app` 供复现；3 份旧应用包已删除，删除记录保存在 `.git/magpie-upstream-20261020-evidence/old-app-removal-and-launch.json`。共享 Go 缓存当前约 4.9 GB，保留供后续构建复用；固定版本 UI 测试依赖约 27 MB 和新增 WebKit 测试运行时约 291 MB 保留供复验，并保留了原浏览器缓存的运行时引用。更新安装结束时磁盘剩余约 20 GiB；后续旧包清理时实测约 16.5 GiB，删除前后可用空间没有增加，不能按应用逻辑大小宣称已回收空间。本次低磁盘的有界构建例外已由用户明确批准；未创建模拟器。删除旧包和启动应用没有追加构建或测试。
